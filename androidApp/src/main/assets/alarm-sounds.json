@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "sounds": [
+    {"id":"gentle_pizzicato","displayName":"Gentle Pizzicato","path":"audio/Pizzicato jingles/jingles_PIZZI07.ogg","category":"Gentle","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"bright_pizzicato","displayName":"Bright Pizzicato","path":"audio/Pizzicato jingles/jingles_PIZZI03.ogg","category":"Playful","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"standard_steel","displayName":"Standard Steel","path":"audio/Steel jingles/jingles_STEEL07.ogg","category":"Dramatic","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"calm_steel","displayName":"Calm Steel","path":"audio/Steel jingles/jingles_STEEL01.ogg","category":"Gentle","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"retro_rise","displayName":"Retro Rise","path":"audio/8-Bit jingles/jingles_NES00.ogg","category":"Retro","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"retro_alert","displayName":"Retro Alert","path":"audio/8-Bit jingles/jingles_NES13.ogg","category":"Energetic","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"sax_wakeup","displayName":"Sax Wake-Up","path":"audio/Sax jingles/jingles_SAX07.ogg","category":"Energetic","loop":true,"source":"Kenney Music Jingles"},
+    {"id":"short_hit","displayName":"Short Hit","path":"audio/Hit jingles/jingles_HIT00.ogg","category":"Short alert","loop":false,"source":"Kenney Music Jingles"},
+    {"id":"timer_hit","displayName":"Timer Complete","path":"audio/Hit jingles/jingles_HIT15.ogg","category":"Timer completion","loop":false,"source":"Kenney Music Jingles"}
+  ]
+}
