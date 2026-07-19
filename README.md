@@ -47,7 +47,7 @@ Binary trip attachments are intentionally deferred until they can be included sa
 - Daily and weekly reviews, work-session history, focus summaries, and task/project analytics
 - Human-readable versioned JSON export/import, CSV task export, and relationship validation before import
 - Raw database backup/restore with rollback protection and confirmed local-data deletion
-- Room migrations from schema version 1 through the current version 11 without destructive fallback
+- Room migrations from schema version 1 through the current version 13 without destructive fallback
 
 ## Platform and privacy
 
@@ -63,6 +63,8 @@ Android permissions currently used:
 - Exact alarms; Android 12 and newer users are prompted to grant Alarms & reminders access so short timers are not silently treated as inexact work
 - Vibration
 - Device-boot reception to restore enabled alarms, reminders, and timers
+- Read-only device calendar access for user-selected calendars shown in Today and Upcoming
+- Optional NFC access for NFC alarm-ending challenges on supported devices
 
 Manufacturer battery-management policies can still delay background delivery. Life Minder does not claim to bypass Android or device-vendor restrictions.
 

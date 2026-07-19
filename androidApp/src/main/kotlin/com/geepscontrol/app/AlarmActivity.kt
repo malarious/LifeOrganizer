@@ -12,6 +12,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.Handler
 import android.os.Looper
+import android.nfc.NfcAdapter
 import android.text.InputType
 import android.view.MotionEvent
 import android.view.Gravity
@@ -23,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.TextClock
 import android.widget.EditText
+import kotlin.random.Random
 import com.geepscontrol.core.domain.AlarmDifficulty
 import com.geepscontrol.core.domain.AlarmExperience
 
@@ -37,6 +39,9 @@ class AlarmActivity : Activity() {
     private var vibrationRunnable: Runnable? = null
     private val waitingAlarms = ArrayDeque<Intent>()
     private var displayingAlarm = false
+    private var challengeCompletion: (() -> Unit)? = null
+    private var challengeTimeout: Runnable? = null
+    private var openTodayAfterQueue = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,21 +108,46 @@ class AlarmActivity : Activity() {
         )
         intent.getStringExtra(AlarmReceiver.EXTRA_PROFILE_NAME)?.let { profileName -> root.addView(TextView(this).apply { text = profileName; textSize = 18f; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER }) }
         val dismissalAction = if (isTimer) AlarmReceiver.ACTION_TIMER_DISMISS else AlarmReceiver.ACTION_DISMISS
-        if (!isTimer && intent.getBooleanExtra(AlarmReceiver.EXTRA_SNOOZE_AVAILABLE, true)) root.addView(actionButton("Snooze") { perform(AlarmReceiver.ACTION_SNOOZE) })
         val method = intent.getStringExtra(AlarmReceiver.EXTRA_DISMISSAL_METHOD).orEmpty()
         val difficulty = runCatching { AlarmDifficulty.valueOf(intent.getStringExtra(AlarmReceiver.EXTRA_DISMISSAL_DIFFICULTY).orEmpty()) }.getOrDefault(AlarmDifficulty.NORMAL)
-        when (method) {
-            "HOLD" -> root.addView(holdButton("Hold to acknowledge", if (difficulty == AlarmDifficulty.EASY) 3 else if (difficulty == AlarmDifficulty.HARD) 10 else 5) { perform(dismissalAction) })
-            "NUMBER" -> addNumberChallenge(root, difficulty) { perform(dismissalAction) }
-            "TRACE" -> {
-                root.addView(TextView(this).apply { text = "Trace from green to red"; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER })
-                root.addView(TraceChallengeView(this, difficulty) { perform(dismissalAction) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (300 * resources.displayMetrics.density).toInt()))
-            }
-            else -> root.addView(actionButton("Acknowledge") { perform(dismissalAction) })
-        }
-        if (method in setOf("HOLD", "NUMBER", "TRACE")) root.addView(holdButton("Emergency hold to acknowledge", 5) { perform(dismissalAction) })
-        if (method != "STANDARD" && getSystemService(AccessibilityManager::class.java).isEnabled) root.addView(actionButton("Accessible acknowledge") { perform(dismissalAction) })
+        val challenged = method !in setOf("", "STANDARD")
+        if (!isTimer && intent.getBooleanExtra(AlarmReceiver.EXTRA_SNOOZE_AVAILABLE, true)) root.addView(actionButton("Snooze") { if (challenged) beginChallenge(root, method, difficulty, AlarmReceiver.ACTION_SNOOZE) else perform(AlarmReceiver.ACTION_SNOOZE) })
+        root.addView(actionButton("Acknowledge") { if (challenged) beginChallenge(root, method, difficulty, dismissalAction) else perform(dismissalAction) })
         setContentView(root)
+    }
+
+    private fun beginChallenge(root: LinearLayout, method: String, difficulty: AlarmDifficulty, action: String) {
+        stopAlert()
+        root.removeAllViews()
+        val seconds = AlarmExperience.challengeGraceSeconds(difficulty)
+        root.addView(TextView(this).apply { text = "$seconds seconds of quiet — complete the challenge"; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+        val complete = { challengeTimeout?.let(handler::removeCallbacks); challengeTimeout = null; challengeCompletion = null; perform(action) }
+        challengeCompletion = complete
+        when (method) {
+            "HOLD" -> root.addView(holdButton("Hold to finish", if (difficulty == AlarmDifficulty.EASY) 3 else if (difficulty == AlarmDifficulty.HARD) 8 else 5, complete))
+            "NUMBER" -> addNumberChallenge(root, difficulty, complete)
+            "MATH" -> addMathChallenge(root, difficulty, complete)
+            "MEMORY" -> addMemoryChallenge(root, difficulty, complete)
+            "SORT" -> addSortingChallenge(root, difficulty, complete)
+            "TRACE" -> root.addView(TraceChallengeView(this, difficulty, complete), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (300 * resources.displayMetrics.density).toInt()))
+            "NFC" -> startNfcChallenge(root)
+            "SCAN" -> startScanChallenge(root)
+            else -> complete()
+        }
+        root.addView(holdButton("Emergency hold", 5, complete))
+        challengeTimeout = Runnable {
+            startAlert(
+                intent.getBooleanExtra(AlarmReceiver.EXTRA_SOUND, true),
+                intent.getBooleanExtra(AlarmReceiver.EXTRA_VIBRATION, true),
+                intent.getStringExtra(AlarmReceiver.EXTRA_SOUND_ID),
+                intent.getBooleanExtra(AlarmReceiver.EXTRA_LOOP_SOUND, true),
+                intent.getStringExtra(AlarmReceiver.EXTRA_VIBRATION_MODE).orEmpty(),
+                intent.getIntExtra(AlarmReceiver.EXTRA_VIBRATION_DELAY, 0),
+                intent.getIntExtra(AlarmReceiver.EXTRA_START_VOLUME, 100),
+                intent.getIntExtra(AlarmReceiver.EXTRA_MAX_VOLUME, 100),
+                intent.getIntExtra(AlarmReceiver.EXTRA_RAMP_SECONDS, 0),
+            )
+        }.also { handler.postDelayed(it, seconds * 1000L) }
     }
 
     private fun actionButton(
@@ -142,9 +172,18 @@ class AlarmActivity : Activity() {
                 .setAction(action)
                 .putExtra(AlarmReceiver.EXTRA_ID, alarmId),
         )
+        if (action == AlarmReceiver.ACTION_DISMISS) {
+            val day = java.time.LocalDate.now().toString()
+            val preferences = getSharedPreferences("geeps-control-settings", MODE_PRIVATE)
+            if (preferences.getString("last_alarm_today_handoff", null) != day) {
+                preferences.edit().putString("last_alarm_today_handoff", day).apply()
+                openTodayAfterQueue = true
+            }
+        }
         val next = waitingAlarms.removeFirstOrNull()
         if (next == null) {
             displayingAlarm = false
+            if (openTodayAfterQueue) startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_TODAY, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))
             finishAndRemoveTask()
         } else {
             setIntent(next)
@@ -238,7 +277,60 @@ class AlarmActivity : Activity() {
         root.addView(actionButton("Acknowledge") { if (AlarmExperience.validateNumber(expected, input.text.toString())) action() else error.text = "That number does not match" })
     }
 
+    private fun addMathChallenge(root: LinearLayout, difficulty: AlarmDifficulty, action: () -> Unit) {
+        val (problem, answer) = AlarmExperience.mathChallenge(difficulty)
+        val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED; textSize = 24f; setTextColor(Color.WHITE); hint = "Answer"; setHintTextColor(Color.GRAY) }
+        root.addView(TextView(this).apply { text = "Solve $problem"; textSize = 28f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+        root.addView(input)
+        root.addView(actionButton("Submit") { if (input.text.toString().toIntOrNull() == answer) action() else input.error = "Try again" })
+    }
+
+    private fun addMemoryChallenge(root: LinearLayout, difficulty: AlarmDifficulty, action: () -> Unit) {
+        val expected = buildString { repeat(AlarmExperience.memoryLength(difficulty)) { append(Random.nextInt(0, 10)) } }
+        val prompt = TextView(this).apply { text = "Remember: $expected"; textSize = 28f; setTextColor(Color.WHITE); gravity = Gravity.CENTER }
+        val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; textSize = 24f; setTextColor(Color.WHITE); visibility = android.view.View.GONE }
+        root.addView(prompt); root.addView(input)
+        handler.postDelayed({ prompt.text = "Enter the sequence"; input.visibility = android.view.View.VISIBLE }, 1800)
+        root.addView(actionButton("Submit") { if (input.text.toString() == expected) action() else input.error = "Try again" })
+    }
+
+    private fun addSortingChallenge(root: LinearLayout, difficulty: AlarmDifficulty, action: () -> Unit) {
+        val count = AlarmExperience.memoryLength(difficulty)
+        val values = List(count) { Random.nextInt(1, 100) }.distinct().let { if (it.size < count) (1..count).shuffled() else it }
+        val answer = values.sorted().joinToString("")
+        val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; textSize = 24f; setTextColor(Color.WHITE); hint = "Enter without spaces"; setHintTextColor(Color.GRAY) }
+        root.addView(TextView(this).apply { text = "Smallest to largest: ${values.joinToString(", ")}"; textSize = 24f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+        root.addView(input)
+        root.addView(actionButton("Submit") { if (input.text.toString() == answer) action() else input.error = "Try again" })
+    }
+
+    private fun startNfcChallenge(root: LinearLayout) {
+        val adapter = NfcAdapter.getDefaultAdapter(this)
+        if (adapter == null) root.addView(TextView(this).apply { text = "NFC is not available on this device"; setTextColor(Color.WHITE) })
+        else {
+            root.addView(TextView(this).apply { text = "Tap an NFC tag"; textSize = 24f; setTextColor(Color.WHITE) })
+            adapter.enableReaderMode(this, { runOnUiThread { challengeCompletion?.invoke() } }, NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_NFC_B or NfcAdapter.FLAG_READER_NFC_F or NfcAdapter.FLAG_READER_NFC_V, null)
+        }
+    }
+
+    private fun startScanChallenge(root: LinearLayout) {
+        root.addView(TextView(this).apply { text = "Open a barcode scanner and scan any code"; textSize = 22f; setTextColor(Color.WHITE) })
+        root.addView(actionButton("Open scanner") {
+            val scan = Intent("com.google.zxing.client.android.SCAN")
+            if (scan.resolveActivity(packageManager) != null) startActivityForResult(scan, 4401)
+            else root.addView(TextView(this).apply { text = "No compatible scanner is installed"; setTextColor(Color.rgb(255, 150, 150)) })
+        })
+    }
+
+    @Deprecated("Compatibility callback for external barcode scanners")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 4401 && resultCode == RESULT_OK) challengeCompletion?.invoke()
+    }
+
     override fun onDestroy() {
+        runCatching { NfcAdapter.getDefaultAdapter(this)?.disableReaderMode(this) }
+        challengeTimeout?.let(handler::removeCallbacks)
         stopAlert()
         super.onDestroy()
     }

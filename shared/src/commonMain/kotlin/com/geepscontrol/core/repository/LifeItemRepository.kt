@@ -95,6 +95,8 @@ class LifeItemRepository(
 
     suspend fun removeAlarmProfile(id: Long) = dao.deleteAlarmProfile(id)
 
+    suspend fun setDefaultAlarmProfile(id: Long) = dao.setDefaultAlarmProfile(id)
+
     suspend fun removePreset(id: Long) = dao.deleteTimerPreset(id)
 
     suspend fun save(value: StandaloneTimerEntity) = dao.putStandaloneTimer(value)

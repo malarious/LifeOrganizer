@@ -7,6 +7,18 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AlarmExperienceTest {
+    @Test fun `challenge grace grows with difficulty`() {
+        assertEquals(5, AlarmExperience.challengeGraceSeconds(AlarmDifficulty.EASY))
+        assertEquals(10, AlarmExperience.challengeGraceSeconds(AlarmDifficulty.HARD))
+    }
+
+    @Test fun `math challenges carry their answer`() {
+        AlarmDifficulty.entries.forEach { difficulty ->
+            val (prompt, answer) = AlarmExperience.mathChallenge(difficulty, kotlin.random.Random(7))
+            kotlin.test.assertTrue(prompt.isNotBlank())
+            kotlin.test.assertTrue(answer >= 0)
+        }
+    }
     @Test fun `volume ramp interpolates and clamps`() {
         assertEquals(0.2f, AlarmExperience.volumeAt(0, 20, 80, 60))
         assertEquals(0.5f, AlarmExperience.volumeAt(30_000, 20, 80, 60), 0.001f)

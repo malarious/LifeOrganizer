@@ -88,6 +88,7 @@ import com.geepscontrol.core.domain.AlarmScheduler
 import com.geepscontrol.core.domain.AnalyticsService
 import com.geepscontrol.core.domain.AppDestination
 import com.geepscontrol.core.domain.DailyPlanItem
+import com.geepscontrol.core.domain.DeviceCalendar
 import com.geepscontrol.core.domain.EnergyRequirement
 import com.geepscontrol.core.domain.NotificationCategory
 import com.geepscontrol.core.domain.PlatformActions
@@ -171,6 +172,9 @@ fun LifeMinderApp(
     val contexts by contextRepository.observeContexts().collectAsState(emptyList())
     val tags by tagRepository.observeTags().collectAsState(emptyList())
     val now = currentTimeMillis()
+    var selectedCalendarIds by remember { mutableStateOf(appSettings.selectedCalendarIds) }
+    val deviceCalendars = remember(destination, selectedCalendarIds) { platformActions.deviceCalendars() }
+    val deviceCalendarEvents = remember(destination, selectedCalendarIds, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
     val todayKey = dayKey(now)
     val dailyPlan by planningRepository.observeDay(todayKey).collectAsState(emptyList())
     val activeTimer by timerRepository.observeActive().collectAsState(null)
@@ -372,13 +376,16 @@ fun LifeMinderApp(
                         onDarkMode = { enabled -> themeMode = if (enabled) ThemeMode.DARK else ThemeMode.LIGHT; appSettings.themeMode = themeMode },
                         dataPortability = dataPortability,
                         dataFiles = dataFiles,
+                        deviceCalendars = deviceCalendars,
+                        selectedCalendarIds = selectedCalendarIds,
+                        onSelectedCalendarIds = { selectedCalendarIds = it; appSettings.selectedCalendarIds = it },
                         padding = padding,
                     )
                 destination == AppDestination.TODAY ->
                     UnifiedTodayScreen(
                         timeline = timeline.mapNotNull { item ->
                             if (item.type != TimelineItemType.ALARM) item else lifeAlarms.firstOrNull { it.id == item.id }?.takeIf { it.enabled }?.let { item.copy(startAt = it.scheduledAt, status = "SCHEDULED") }
-                        },
+                        } + deviceCalendarEvents.map { TimelineItem(it.id, TimelineItemType.EVENT, it.title, it.startAt, it.endAt, it.allDay, actionable = false, status = "CALENDAR", subtitle = it.location) },
                         tasks = tasks,
                         plan = dailyPlan,
                         projects = projects,
@@ -398,7 +405,7 @@ fun LifeMinderApp(
                 destination == AppDestination.LIFE_ITEMS ->
                     LifeItemsScreen(reminders, routines, routineOccurrences, medications, medicationOccurrences, events, lifeAlarms, standaloneTimers, timerPresets, lifeItemQuickType, lifeItemRepository, alarmScheduler, padding)
                 destination == AppDestination.UPCOMING ->
-                    UpcomingScreen(timeline, now, padding)
+                    UpcomingScreen(timeline + deviceCalendarEvents.map { TimelineItem(it.id, TimelineItemType.EVENT, it.title, it.startAt, it.endAt, it.allDay, actionable = false, status = "CALENDAR", subtitle = it.location) }, now, padding)
                 destination == AppDestination.TRIPS ->
                     TripsScreen(
                         trips,
@@ -497,6 +504,7 @@ fun LifeMinderApp(
                         onSavePreset = { preset -> scope.launch { lifeItemRepository.save(preset) } },
                         onDeletePreset = { preset -> scope.launch { lifeItemRepository.removePreset(preset.id) } },
                         onSaveProfile = { profile -> scope.launch { lifeItemRepository.save(profile) } },
+                        onSetDefaultProfile = { profile -> scope.launch { lifeItemRepository.setDefaultAlarmProfile(profile.id) } },
                         onDeleteProfile = { profile -> scope.launch { lifeItemRepository.removeAlarmProfile(profile.id) } },
                         onToggleStandaloneTimer = { timer ->
                             scope.launch {
@@ -1196,6 +1204,9 @@ private fun MetadataSettingsScreen(
     onDarkMode: (Boolean) -> Unit,
     dataPortability: DataPortabilityService,
     dataFiles: DataFileGateway,
+    deviceCalendars: List<DeviceCalendar>,
+    selectedCalendarIds: Set<Long>,
+    onSelectedCalendarIds: (Set<Long>) -> Unit,
     padding: PaddingValues,
 ) {
     var contextName by remember { mutableStateOf("") }
@@ -1249,6 +1260,14 @@ private fun MetadataSettingsScreen(
         item { Text("Alarms and timers", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
         item { Text("Alarm profiles, bundled-sound previews, snooze limits, volume ramps, vibration modes, and dismissal methods are managed under Timers → Alarms. Favorite presets and recent timers are under Timers → Timers.") }
         item { Text("Android 12+ requires Alarms & reminders access for dependable exact timers. Life Minder requests this system permission when unavailable.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Device calendars", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
+        if (deviceCalendars.isEmpty()) item { Text("No readable device calendars found. Grant Calendar permission and return to Settings.", style = MaterialTheme.typography.bodySmall) }
+        items(deviceCalendars, key = { "calendar-${it.id}" }) { calendar ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(calendar.id in selectedCalendarIds, { checked -> onSelectedCalendarIds(if (checked) selectedCalendarIds + calendar.id else selectedCalendarIds - calendar.id) })
+                Column { Text(calendar.name); Text(calendar.accountName, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
         item { Text("Data safety", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
         item { Button(onClick = { scope.launch { runCatching { dataFiles.writeExport("life-minder-export.json", "application/json", dataPortability.exportJson(currentTimeMillis())) }.onSuccess { dataStatus = "JSON exported to $it" }.onFailure { dataStatus = "Export failed: ${it.message}" } } }, modifier = Modifier.fillMaxWidth()) { Text("Export JSON") } }
         item { OutlinedButton(onClick = { scope.launch { runCatching { dataFiles.writeExport("life-minder-tasks.csv", "text/csv", dataPortability.exportCsv()) }.onSuccess { dataStatus = "CSV exported to $it" }.onFailure { dataStatus = "CSV export failed: ${it.message}" } } }, modifier = Modifier.fillMaxWidth()) { Text("Export tasks as CSV") } }
@@ -1413,7 +1432,7 @@ private fun <T> ChoiceGrid(
 }
 
 @Composable
-private fun <T> SelectorField(
+internal fun <T> SelectorField(
     label: String,
     choices: List<T>,
     selected: T,
@@ -1603,6 +1622,7 @@ private fun TimerScreen(
     onSavePreset: (com.geepscontrol.core.database.TimerPresetEntity) -> Unit,
     onDeletePreset: (com.geepscontrol.core.database.TimerPresetEntity) -> Unit,
     onSaveProfile: (AlarmProfileEntity) -> Unit,
+    onSetDefaultProfile: (AlarmProfileEntity) -> Unit,
     onDeleteProfile: (AlarmProfileEntity) -> Unit,
     onToggleStandaloneTimer: (StandaloneTimerEntity) -> Unit,
     onToggleStandaloneAlarm: (StandaloneAlarmEntity) -> Unit,
@@ -1612,6 +1632,8 @@ private fun TimerScreen(
 ) {
     var tick by remember { mutableStateOf(currentTimeMillis()) }
     var timerTab by remember { mutableStateOf("Timers") }
+    var showProfileManager by remember { mutableStateOf(false) }
+    var showProfilePicker by remember { mutableStateOf(false) }
     var profileBeingEdited by remember { mutableStateOf<AlarmProfileEntity?>(null) }
     var selectedTaskId by remember { mutableStateOf<Long?>(null) }
     var showCustomTimer by remember { mutableStateOf(false) }
@@ -1636,6 +1658,33 @@ private fun TimerScreen(
     var alarmUnit by remember { mutableStateOf(AlarmRepeatUnit.DAY) }
     var alarmWeekdays by remember { mutableStateOf(setOf<Int>()) }
     var alarmProfileId by remember { mutableStateOf<Long?>(null) }
+    var alarmSound by remember { mutableStateOf(true) }
+    var alarmSoundId by remember { mutableStateOf("standard_steel") }
+    var alarmLoopSound by remember { mutableStateOf(true) }
+    var alarmVibrationMode by remember { mutableStateOf("STANDARD") }
+    var alarmVibrationDelay by remember { mutableStateOf(0) }
+    var alarmStartVolume by remember { mutableStateOf(30) }
+    var alarmMaxVolume by remember { mutableStateOf(100) }
+    var alarmVolumeRamp by remember { mutableStateOf(45) }
+    var alarmSnoozeMinutes by remember { mutableStateOf("8") }
+    var alarmMaximumSnoozes by remember { mutableStateOf("0") }
+    var alarmDismissalMethod by remember { mutableStateOf("STANDARD") }
+    var alarmDismissalDifficulty by remember { mutableStateOf("NORMAL") }
+    fun applyProfile(profile: AlarmProfileEntity) {
+        alarmProfileId = profile.id
+        alarmSound = profile.soundEnabled
+        alarmSoundId = profile.soundId ?: "standard_steel"
+        alarmLoopSound = profile.loopSound
+        alarmVibrationMode = if (profile.vibrationEnabled) profile.vibrationMode else "OFF"
+        alarmVibrationDelay = profile.vibrationStartDelaySeconds
+        alarmStartVolume = profile.startingVolumePercent
+        alarmMaxVolume = profile.maximumVolumePercent
+        alarmVolumeRamp = profile.volumeRampSeconds
+        alarmSnoozeMinutes = profile.snoozeDurationMinutes.toString()
+        alarmMaximumSnoozes = profile.maximumSnoozes.toString()
+        alarmDismissalMethod = profile.dismissalMethod
+        alarmDismissalDifficulty = profile.dismissalDifficulty
+    }
     fun openAlarmEditor(alarm: StandaloneAlarmEntity?) {
         editingAlarm = alarm
         val rule = AlarmRepeatRule.decode(alarm?.recurrenceRule)
@@ -1646,7 +1695,21 @@ private fun TimerScreen(
         alarmInterval = rule?.interval?.toString() ?: "1"
         alarmUnit = rule?.unit ?: AlarmRepeatUnit.DAY
         alarmWeekdays = rule?.weekdays.orEmpty()
-        alarmProfileId = alarm?.profileId ?: profiles.firstOrNull { it.builtInKey == "standard" }?.id
+        val profile = alarm?.profileId?.let { id -> profiles.firstOrNull { it.id == id } } ?: profiles.firstOrNull { it.isDefault } ?: profiles.firstOrNull { it.builtInKey == "standard" }
+        if (profile != null) applyProfile(profile)
+        alarmProfileId = alarm?.profileId ?: profile?.id
+        alarmSound = alarm?.sound ?: alarmSound
+        alarmSoundId = alarm?.soundId ?: alarmSoundId
+        alarmLoopSound = alarm?.loopSound ?: alarmLoopSound
+        alarmVibrationMode = alarm?.vibrationMode ?: alarmVibrationMode
+        alarmVibrationDelay = alarm?.vibrationStartDelaySeconds ?: alarmVibrationDelay
+        alarmStartVolume = alarm?.startingVolumePercent ?: alarmStartVolume
+        alarmMaxVolume = alarm?.maximumVolumePercent ?: alarmMaxVolume
+        alarmVolumeRamp = alarm?.volumeRampSeconds ?: alarmVolumeRamp
+        alarmSnoozeMinutes = (alarm?.snoozeMinutes ?: alarmSnoozeMinutes.toIntOrNull() ?: 8).toString()
+        alarmMaximumSnoozes = (alarm?.maximumSnoozes ?: alarmMaximumSnoozes.toIntOrNull() ?: 0).toString()
+        alarmDismissalMethod = alarm?.dismissalMethod ?: alarmDismissalMethod
+        alarmDismissalDifficulty = alarm?.dismissalDifficulty ?: alarmDismissalDifficulty
         alarmRepeat = when { rule == null -> "Once"; rule.unit == AlarmRepeatUnit.MONTH && rule.interval == 1 -> "Monthly"; rule.unit == AlarmRepeatUnit.WEEK && rule.interval == 1 -> "Weekly"; rule.unit == AlarmRepeatUnit.WEEK && rule.interval == 2 -> "Bi-weekly"; else -> "Custom" }
         showAlarmEditor = true
     }
@@ -1714,16 +1777,8 @@ private fun TimerScreen(
             }
         }
         if (timerTab == "Alarms") item {
-            Text("Alarm profiles", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            profiles.filterNot { it.builtInKey?.startsWith("legacy_") == true }.forEach { profile ->
-                Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) { Text(profile.name, fontWeight = FontWeight.SemiBold); Text("${profile.dismissalMethod.lowercase()} · ${profile.snoozeDurationMinutes} min snooze", style = MaterialTheme.typography.bodySmall) }
-                        TextButton(onClick = { profileBeingEdited = if (profile.builtInKey == null) profile else profile.copy(id = 0, name = "${profile.name} copy", builtInKey = null, createdAt = currentTimeMillis(), updatedAt = currentTimeMillis()) }) { Text(if (profile.builtInKey == null) "Edit" else "Copy") }
-                    }
-                }
-            }
-            OutlinedButton(onClick = { val now = currentTimeMillis(); profileBeingEdited = AlarmProfileEntity(name = "Custom", soundId = "standard_steel", createdAt = now, updatedAt = now) }, modifier = Modifier.fillMaxWidth()) { Text("New profile") }
+            Text("Alarm controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = { showProfileManager = true }, modifier = Modifier.fillMaxWidth()) { Text("Manage alarm profiles") }
         }
         if ((timerTab == "Timers" && runningStandalone.isNotEmpty()) || (timerTab == "Alarms" && enabledStandaloneAlarms.isNotEmpty())) item { Text("Active", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         if (timerTab == "Timers") items(runningStandalone, key = { "running-timer-${it.id}" }) { timer ->
@@ -1868,7 +1923,11 @@ private fun TimerScreen(
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item { OutlinedTextField(alarmLabel, { alarmLabel = it }, label = { Text("Alarm name") }, modifier = Modifier.fillMaxWidth()) }
-                    if (profiles.isNotEmpty()) item { SelectorField("Alarm profile", profiles.map { it.id }, alarmProfileId, { id -> profiles.firstOrNull { it.id == id }?.name ?: "Standard" }, { alarmProfileId = it }, Modifier.fillMaxWidth()) }
+                    if (profiles.isNotEmpty()) item {
+                        OutlinedButton(onClick = { showProfilePicker = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Use existing profile${alarmProfileId?.let { id -> profiles.firstOrNull { it.id == id }?.name }?.let { ": $it" }.orEmpty()}")
+                        }
+                    }
                     item { OutlinedButton(onClick = { showAlarmDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text(formatDate(alarmDate)) } }
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1877,6 +1936,21 @@ private fun TimerScreen(
                         }
                     }
                     item { SelectorField("Repeat", listOf("Once", "Weekly", "Bi-weekly", "Monthly", "Custom"), alarmRepeat, { it }, { alarmRepeat = it }, Modifier.fillMaxWidth()) }
+                    item { Text("Alarm behavior", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
+                    item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(alarmSound, { alarmSound = it }); Text("Sound", modifier = Modifier.padding(start = 8.dp)) } }
+                    if (alarmSound) {
+                        item { SelectorField("Sound", bundledAlarmSounds, bundledAlarmSounds.firstOrNull { it.id == alarmSoundId } ?: bundledAlarmSounds.first(), { it.name }, { alarmSoundId = it.id }, Modifier.fillMaxWidth()) }
+                        item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedButton(onClick = { platformActions.previewAlarmSound(alarmSoundId) }, modifier = Modifier.weight(1f)) { Text("Preview") }; OutlinedButton(onClick = platformActions::stopAlarmSoundPreview, modifier = Modifier.weight(1f)) { Text("Stop") } } }
+                        item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(alarmLoopSound, { alarmLoopSound = it }); Text("Repeat sound until acknowledged", modifier = Modifier.padding(start = 8.dp)) } }
+                        item { Text("Starting volume: $alarmStartVolume%"); Slider(alarmStartVolume.toFloat(), { alarmStartVolume = it.toInt().coerceAtMost(alarmMaxVolume) }, valueRange = 0f..100f, steps = 9) }
+                        item { Text("Maximum volume: $alarmMaxVolume%"); Slider(alarmMaxVolume.toFloat(), { alarmMaxVolume = it.toInt().coerceAtLeast(alarmStartVolume) }, valueRange = 0f..100f, steps = 9) }
+                        item { Text("Volume ramp: ${alarmVolumeRamp}s"); Slider(alarmVolumeRamp.toFloat(), { alarmVolumeRamp = it.toInt() }, valueRange = 0f..300f, steps = 9) }
+                    }
+                    item { SelectorField("Vibration", listOf("OFF", "LIGHT", "STANDARD", "STRONG", "ESCALATING", "CONTINUOUS"), alarmVibrationMode, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmVibrationMode = it }, Modifier.fillMaxWidth()) }
+                    if (alarmVibrationMode != "OFF") item { Text("Vibration delay: ${alarmVibrationDelay}s"); Slider(alarmVibrationDelay.toFloat(), { alarmVibrationDelay = it.toInt() }, valueRange = 0f..120f, steps = 11) }
+                    item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedTextField(alarmSnoozeMinutes, { alarmSnoozeMinutes = it.filter(Char::isDigit) }, label = { Text("Snooze min") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(alarmMaximumSnoozes, { alarmMaximumSnoozes = it.filter(Char::isDigit) }, label = { Text("Max (0 unlimited)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) } }
+                    item { SelectorField("End condition", listOf("STANDARD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC", "HOLD"), alarmDismissalMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalMethod = it }, Modifier.fillMaxWidth()) }
+                    if (alarmDismissalMethod != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), alarmDismissalDifficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalDifficulty = it }, Modifier.fillMaxWidth()) }
                     if (alarmRepeat in setOf("Weekly", "Bi-weekly") || (alarmRepeat == "Custom" && alarmUnit == AlarmRepeatUnit.WEEK)) {
                         item { Text("Days of the week", fontWeight = FontWeight.SemiBold) }
                         listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").chunked(3).forEachIndexed { rowIndex, names ->
@@ -1914,7 +1988,40 @@ private fun TimerScreen(
                     val now = currentTimeMillis()
                     val scheduled = alarmDate + (alarmHour.toIntOrNull() ?: 7).coerceIn(0, 23) * 3_600_000L + (alarmMinute.toIntOrNull() ?: 0).coerceIn(0, 59) * 60_000L
                     val previous = editingAlarm
-                    onSaveStandaloneAlarm(StandaloneAlarmEntity(id = previous?.id ?: 0, label = alarmLabel.trim(), scheduledAt = scheduled, recurrenceRule = rule?.encode(), enabled = previous?.enabled ?: true, sound = previous?.sound ?: true, vibration = previous?.vibration ?: true, snoozeMinutes = profiles.firstOrNull { it.id == alarmProfileId }?.snoozeDurationMinutes ?: previous?.snoozeMinutes ?: 10, profileId = alarmProfileId, createdAt = previous?.createdAt ?: now, updatedAt = now))
+                    onSaveStandaloneAlarm(
+                        StandaloneAlarmEntity(
+                            id = previous?.id ?: 0,
+                            label = alarmLabel.trim(),
+                            scheduledAt = scheduled,
+                            recurrenceRule = rule?.encode(),
+                            enabled = previous?.enabled ?: true,
+                            sound = alarmSound,
+                            vibration = alarmVibrationMode != "OFF",
+                            snoozeMinutes = (alarmSnoozeMinutes.toIntOrNull() ?: 8).coerceAtLeast(1),
+                            profileId = null,
+                            snoozeCount = previous?.snoozeCount ?: 0,
+                            soundId = alarmSoundId,
+                            loopSound = alarmLoopSound,
+                            vibrationMode = alarmVibrationMode,
+                            vibrationStartDelaySeconds = alarmVibrationDelay,
+                            startingVolumePercent = alarmStartVolume,
+                            maximumVolumePercent = alarmMaxVolume,
+                            volumeRampSeconds = alarmVolumeRamp,
+                            maximumSnoozes = (alarmMaximumSnoozes.toIntOrNull() ?: 0).coerceAtLeast(0),
+                            dismissalMethod = alarmDismissalMethod,
+                            dismissalDifficulty = alarmDismissalDifficulty,
+                            localHour = (alarmHour.toIntOrNull() ?: 7).coerceIn(0, 23),
+                            localMinute = (alarmMinute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                            localEpochDay = dayKey(alarmDate),
+                            associatedType = previous?.associatedType,
+                            associatedId = previous?.associatedId,
+                            lastTriggeredAt = previous?.lastTriggeredAt,
+                            lastDismissedAt = previous?.lastDismissedAt,
+                            createdAt = previous?.createdAt ?: now,
+                            updatedAt = now,
+                        ),
+                    )
+                    platformActions.stopAlarmSoundPreview()
                     showAlarmEditor = false
                 }) { Text("Save alarm") }
             },
@@ -1925,6 +2032,57 @@ private fun TimerScreen(
         val picker = rememberDatePickerState(initialSelectedDateMillis = alarmDate)
         DatePickerDialog(onDismissRequest = { showAlarmDatePicker = false }, confirmButton = { TextButton(onClick = { alarmDate = picker.selectedDateMillis ?: alarmDate; showAlarmDatePicker = false }) { Text("Set date") } }, dismissButton = { TextButton(onClick = { showAlarmDatePicker = false }) { Text("Cancel") } }) { DatePicker(picker) }
     }
+    if (showProfilePicker) {
+        AlertDialog(
+            onDismissRequest = { showProfilePicker = false },
+            title = { Text("Use existing profile") },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(profiles.filterNot { it.builtInKey?.startsWith("legacy_") == true }, key = { "profile-choice-${it.id}" }) { profile ->
+                        OutlinedButton(
+                            onClick = { applyProfile(profile); showProfilePicker = false },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(profile.name, fontWeight = FontWeight.SemiBold)
+                                Text("${profile.dismissalMethod.lowercase()} · ${profile.snoozeDurationMinutes} min snooze", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showProfilePicker = false }) { Text("Cancel") } },
+        )
+    }
+    if (showProfileManager) {
+        AlertDialog(
+            onDismissRequest = { showProfileManager = false },
+            title = { Text("Alarm profiles") },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(profiles.filterNot { it.builtInKey?.startsWith("legacy_") == true }, key = { "managed-profile-${it.id}" }) { profile ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(profile.name + if (profile.isDefault) " · Default" else "", fontWeight = FontWeight.SemiBold)
+                                    Text("${profile.dismissalMethod.lowercase()} · ${profile.snoozeDurationMinutes} min snooze", style = MaterialTheme.typography.bodySmall)
+                                }
+                                TextButton(onClick = {
+                                    profileBeingEdited = if (profile.builtInKey == null) profile else profile.copy(id = 0, name = "${profile.name} copy", builtInKey = null, createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())
+                                }) { Text(if (profile.builtInKey == null) "Edit" else "Copy") }
+                                if (!profile.isDefault) TextButton(onClick = { onSetDefaultProfile(profile) }) { Text("Set default") }
+                            }
+                        }
+                    }
+                    item {
+                        OutlinedButton(onClick = { val now = currentTimeMillis(); profileBeingEdited = AlarmProfileEntity(name = "Custom", soundId = "standard_steel", createdAt = now, updatedAt = now) }, modifier = Modifier.fillMaxWidth()) { Text("New profile") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showProfileManager = false }) { Text("Done") } },
+        )
+    }
     profileBeingEdited?.let { profile ->
         AlarmProfileEditorDialog(
             profile,
@@ -1934,43 +2092,6 @@ private fun TimerScreen(
             onDelete = if (profile.id > 0 && profile.builtInKey == null) ({ onDeleteProfile(profile); profileBeingEdited = null }) else null,
         )
     }
-}
-
-@Composable
-private fun AlarmProfileEditorDialog(
-    original: AlarmProfileEntity,
-    platformActions: PlatformActions,
-    onDismiss: () -> Unit,
-    onSave: (AlarmProfileEntity) -> Unit,
-    onDelete: (() -> Unit)?,
-) {
-    var name by remember(original.id) { mutableStateOf(original.name) }
-    var soundId by remember(original.id) { mutableStateOf(original.soundId ?: "standard_steel") }
-    var vibrationMode by remember(original.id) { mutableStateOf(original.vibrationMode) }
-    var ramp by remember(original.id) { mutableStateOf(original.volumeRampSeconds) }
-    var snooze by remember(original.id) { mutableStateOf(original.snoozeDurationMinutes.toString()) }
-    var maxSnoozes by remember(original.id) { mutableStateOf(original.maximumSnoozes.toString()) }
-    var method by remember(original.id) { mutableStateOf(original.dismissalMethod) }
-    var difficulty by remember(original.id) { mutableStateOf(original.dismissalDifficulty) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Alarm profile") },
-        text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { OutlinedTextField(name, { name = it }, label = { Text("Profile name") }, modifier = Modifier.fillMaxWidth()) }
-                item { SelectorField("Sound", bundledAlarmSounds, bundledAlarmSounds.firstOrNull { it.id == soundId } ?: bundledAlarmSounds.first(), { "${it.name} · ${it.category}" }, { soundId = it.id }, Modifier.fillMaxWidth()) }
-                item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedButton(onClick = { platformActions.previewAlarmSound(soundId) }, modifier = Modifier.weight(1f)) { Text("Preview") }; OutlinedButton(onClick = platformActions::stopAlarmSoundPreview, modifier = Modifier.weight(1f)) { Text("Stop") } } }
-                item { SelectorField("Vibration", listOf("OFF", "LIGHT", "STANDARD", "STRONG", "ESCALATING", "CONTINUOUS"), vibrationMode, { it.lowercase().replaceFirstChar(Char::uppercase) }, { vibrationMode = it }, Modifier.fillMaxWidth()) }
-                item { Text("Volume ramp: ${ramp}s"); Slider(ramp.toFloat(), { ramp = it.toInt() }, valueRange = 0f..300f, steps = 9) }
-                item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedTextField(snooze, { snooze = it.filter(Char::isDigit) }, label = { Text("Snooze min") }, modifier = Modifier.weight(1f)); OutlinedTextField(maxSnoozes, { maxSnoozes = it.filter(Char::isDigit) }, label = { Text("Max (0 unlimited)") }, modifier = Modifier.weight(1f)) } }
-                item { SelectorField("Dismiss", listOf("STANDARD", "HOLD", "NUMBER", "TRACE"), method, { it.lowercase().replaceFirstChar(Char::uppercase) }, { method = it }, Modifier.fillMaxWidth()) }
-                if (method != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), difficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { difficulty = it }, Modifier.fillMaxWidth()) }
-                onDelete?.let { action -> item { TextButton(onClick = action) { Text("Delete profile", color = MaterialTheme.colorScheme.error) } } }
-            }
-        },
-        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onSave(original.copy(name = name.trim(), soundId = soundId, vibrationMode = vibrationMode, vibrationEnabled = vibrationMode != "OFF", volumeRampSeconds = ramp, snoozeDurationMinutes = (snooze.toIntOrNull() ?: 8).coerceAtLeast(1), maximumSnoozes = (maxSnoozes.toIntOrNull() ?: 0).coerceAtLeast(0), dismissalMethod = method, dismissalDifficulty = difficulty, challengeRequiredForDismiss = method != "STANDARD")) }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }
 
 private fun formatDuration(millis: Long): String {

@@ -3,7 +3,7 @@ package com.geepscontrol.core.domain
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
-enum class AlarmDismissalMethod { STANDARD, HOLD, NUMBER, TRACE }
+enum class AlarmDismissalMethod { STANDARD, HOLD, NUMBER, TRACE, MATH, MEMORY, SCAN, NFC, SORT }
 enum class AlarmDifficulty { EASY, NORMAL, HARD }
 
 data class AlarmSoundOption(val id: String, val name: String, val category: String)
@@ -21,6 +21,15 @@ val bundledAlarmSounds = listOf(
 )
 
 object AlarmExperience {
+    fun challengeGraceSeconds(difficulty: AlarmDifficulty) = when (difficulty) { AlarmDifficulty.EASY -> 5; AlarmDifficulty.NORMAL -> 7; AlarmDifficulty.HARD -> 10 }
+
+    fun mathChallenge(difficulty: AlarmDifficulty, random: Random = Random.Default): Pair<String, Int> = when (difficulty) {
+        AlarmDifficulty.EASY -> random.nextInt(1, 10).let { a -> random.nextInt(1, 10).let { b -> "$a + $b" to a + b } }
+        AlarmDifficulty.NORMAL -> random.nextInt(2, 13).let { a -> random.nextInt(2, 13).let { b -> "$a × $b" to a * b } }
+        AlarmDifficulty.HARD -> random.nextInt(3, 15).let { a -> random.nextInt(2, 10).let { b -> random.nextInt(1, 20).let { c -> "($a × $b) + $c" to a * b + c } } }
+    }
+
+    fun memoryLength(difficulty: AlarmDifficulty) = when (difficulty) { AlarmDifficulty.EASY -> 3; AlarmDifficulty.NORMAL -> 5; AlarmDifficulty.HARD -> 7 }
     fun volumeAt(
         elapsedMillis: Long,
         startPercent: Int,

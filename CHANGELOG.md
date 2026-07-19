@@ -4,6 +4,8 @@ All notable changes to Life Minder are recorded here.
 
 ## Unreleased
 
+- Added default alarm profiles that populate fully detached alarm settings; local-wall-clock alarm intent and time-zone rescheduling; quiet challenge grace periods; Math, Memory, Sorting, barcode-scan, and NFC ending challenges; first acknowledged alarm handoff to Today after queued alarms; and selectable read-only Android calendar events in Today and Upcoming. Added schema migration 12 to 13 and began splitting alarm/profile UI out of the application UI monolith.
+- Moved alarm profiles behind dedicated management so alarms remain first, and added profile-as-template alarm creation with per-alarm sound, volume ramp, vibration, snooze limits, and Button/Number/Trace/Hold end conditions. Added nondestructive Room schema migration 11 to 12 for alarm-specific behavior overrides.
 - Added a stable global quick-add workflow; internal Timers/Alarms segmentation; one-tap quick timers; hours/minutes/seconds custom timers; favorite presets and recent restart/save actions; schema-11 live alarm profiles; five built-in profiles; 85 packaged Kenney jingles with curated metadata and licensing; sound preview; bundled playback; simultaneous/delayed vibration; elapsed-time volume ramps; snooze limits; queued alarms; and Standard, Hold, Number, and Trace dismissal with accessible emergency fallback.
 
 - Reconciled Today alarms with their current stored dates, made timeline rows navigable, allowed unnamed timers, hid finished trip entries, added Add Place and entry editing, replaced Do Now time presets with a five-minute slider, and moved alarm sound/vibration into the custom alarm screen.

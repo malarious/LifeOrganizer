@@ -32,6 +32,9 @@ class AndroidAppSettings(
     override var quietStartHour: Int by intPreference("quiet_start", 22)
     override var quietEndHour: Int by intPreference("quiet_end", 7)
     override var onboardingCompleted: Boolean by booleanPreference("onboarding_completed", false)
+    override var selectedCalendarIds: Set<Long>
+        get() = preferences.getStringSet("selected_calendar_ids", emptySet()).orEmpty().mapNotNull(String::toLongOrNull).toSet()
+        set(value) { preferences.edit().putStringSet("selected_calendar_ids", value.map(Long::toString).toSet()).apply() }
 
     private fun booleanPreference(
         key: String,

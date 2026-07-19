@@ -30,7 +30,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    companion object { const val EXTRA_OPEN_TODAY = "open_today" }
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_OPEN_TODAY, false)) recreate()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +62,7 @@ class MainActivity : ComponentActivity() {
             )
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.POST_NOTIFICATIONS)
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.READ_CALENDAR)
         activityScope.launch {
             ensureDefaultContexts(contextRepository)
             ensureDefaultAlarmProfiles(lifeItemRepository, System.currentTimeMillis())

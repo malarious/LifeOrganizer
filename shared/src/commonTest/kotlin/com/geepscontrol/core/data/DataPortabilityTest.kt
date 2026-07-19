@@ -37,9 +37,10 @@ class DataPortabilityTest {
 
     @Test fun `alarm profiles and challenge settings round trip with references`() {
         val profile = AlarmProfileEntity(id = 4, name = "Wake", dismissalMethod = "NUMBER", challengeRequiredForDismiss = true, createdAt = 0, updatedAt = 0)
-        val alarm = StandaloneAlarmEntity(id = 8, label = "Up", scheduledAt = 100, profileId = 4, createdAt = 0, updatedAt = 0)
+        val alarm = StandaloneAlarmEntity(id = 8, label = "Up", scheduledAt = 100, profileId = 4, snoozeMinutes = 6, soundId = "retro_alert", vibrationMode = "STRONG", maximumSnoozes = 2, dismissalMethod = "TRACE", dismissalDifficulty = "HARD", createdAt = 0, updatedAt = 0)
         val bundle = ExportBundle(exportedAt = 1, projects = emptyList(), tasks = emptyList(), contexts = emptyList(), tags = emptyList(), sessions = emptyList(), reviews = emptyList(), alarms = emptyList(), alarmProfiles = listOf(profile), standaloneAlarms = listOf(alarm))
         assertEquals("NUMBER", decodeAndValidateExport(json.encodeToString(bundle), json).alarmProfiles.single().dismissalMethod)
+        assertEquals("TRACE", decodeAndValidateExport(json.encodeToString(bundle), json).standaloneAlarms.single().dismissalMethod)
         assertFails { decodeAndValidateExport(json.encodeToString(bundle.copy(alarmProfiles = emptyList())), json) }
     }
 }

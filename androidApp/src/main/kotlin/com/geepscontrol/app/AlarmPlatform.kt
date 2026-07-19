@@ -112,10 +112,10 @@ class AlarmReceiver : BroadcastReceiver() {
                         val standalone = lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)?.takeIf { it.enabled }
                         val profile = standalone?.profileId?.let { lifeRepository.getAlarmProfile(it) }
                         val alarm = repository.getAlarm(id)?.takeIf { it.enabled } ?: standalone?.let { AlarmDefinition(id = id, triggerAt = it.scheduledAt, label = it.label, vibration = it.vibration, sound = it.sound) }
-                        alarm?.let { showAlarmScreen(context, it.id, it.label, sound = profile?.soundEnabled ?: it.sound, vibration = profile?.vibrationEnabled ?: it.vibration, soundId = profile?.soundId, profileName = profile?.name, loopSound = profile?.loopSound ?: true, vibrationMode = profile?.vibrationMode ?: "STANDARD", vibrationDelaySeconds = profile?.vibrationStartDelaySeconds ?: 0, startingVolumePercent = profile?.startingVolumePercent ?: 100, maximumVolumePercent = profile?.maximumVolumePercent ?: 100, volumeRampSeconds = profile?.volumeRampSeconds ?: 0, dismissalMethod = profile?.dismissalMethod ?: "STANDARD", dismissalDifficulty = profile?.dismissalDifficulty ?: "NORMAL", snoozeAvailable = profile?.let { com.geepscontrol.core.domain.AlarmExperience.canSnooze(standalone?.snoozeCount ?: 0, it.maximumSnoozes) } ?: true) }
+                        alarm?.let { showAlarmScreen(context, it.id, it.label, sound = it.sound, vibration = it.vibration, soundId = standalone?.soundId ?: profile?.soundId, profileName = profile?.name, loopSound = standalone?.loopSound ?: profile?.loopSound ?: true, vibrationMode = standalone?.vibrationMode ?: profile?.vibrationMode ?: "STANDARD", vibrationDelaySeconds = standalone?.vibrationStartDelaySeconds ?: profile?.vibrationStartDelaySeconds ?: 0, startingVolumePercent = standalone?.startingVolumePercent ?: profile?.startingVolumePercent ?: 100, maximumVolumePercent = standalone?.maximumVolumePercent ?: profile?.maximumVolumePercent ?: 100, volumeRampSeconds = standalone?.volumeRampSeconds ?: profile?.volumeRampSeconds ?: 0, dismissalMethod = standalone?.dismissalMethod ?: profile?.dismissalMethod ?: "STANDARD", dismissalDifficulty = standalone?.dismissalDifficulty ?: profile?.dismissalDifficulty ?: "NORMAL", snoozeAvailable = com.geepscontrol.core.domain.AlarmExperience.canSnooze(standalone?.snoozeCount ?: 0, standalone?.maximumSnoozes ?: profile?.maximumSnoozes ?: 0)) }
                         standalone?.takeIf { it.recurrenceRule != null }?.let { value ->
                             val next = AlarmRepeatRule.decode(value.recurrenceRule)?.let { AlarmRepeatEngine.nextFuture(it, value.scheduledAt, System.currentTimeMillis()) } ?: value.scheduledAt + 86_400_000L
-                            lifeRepository.save(value.copy(scheduledAt = next, lastTriggeredAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis()))
+                            lifeRepository.save(value.copy(scheduledAt = next, localEpochDay = java.time.Instant.ofEpochMilli(next).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay(), lastTriggeredAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis()))
                             AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = next, label = value.label, vibration = value.vibration, sound = value.sound))
                         }
                     }
@@ -133,8 +133,8 @@ class AlarmReceiver : BroadcastReceiver() {
                                 lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)?.let { alarm ->
                                     val now = System.currentTimeMillis()
                                     val profile = alarm.profileId?.let { lifeRepository.getAlarmProfile(it) }
-                                    if (profile == null || com.geepscontrol.core.domain.AlarmExperience.canSnooze(alarm.snoozeCount, profile.maximumSnoozes)) {
-                                        val minutes = profile?.snoozeDurationMinutes ?: alarm.snoozeMinutes
+                                    if (com.geepscontrol.core.domain.AlarmExperience.canSnooze(alarm.snoozeCount, alarm.maximumSnoozes ?: profile?.maximumSnoozes ?: 0)) {
+                                        val minutes = alarm.snoozeMinutes
                                         lifeRepository.snoozeAlarm(alarm.id, now + minutes * 60_000L, now)
                                         AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = now + minutes * 60_000L, label = alarm.label, vibration = profile?.vibrationEnabled ?: alarm.vibration, sound = profile?.soundEnabled ?: alarm.sound))
                                         NotificationManagerCompat.from(context).cancel(id.toInt())
@@ -154,7 +154,7 @@ class AlarmReceiver : BroadcastReceiver() {
                                 // ACTION_FIRE normally advances the record first. Keeping an already-future
                                 // date makes dismiss safe even when the two broadcasts finish out of order.
                                 val next = rule?.let { AlarmRepeatEngine.nextFuture(it, alarm.scheduledAt, now) } ?: alarm.scheduledAt
-                                lifeRepository.save(alarm.copy(scheduledAt = next, snoozeCount = 0, lastDismissedAt = now, updatedAt = now))
+                                lifeRepository.save(alarm.copy(scheduledAt = next, localEpochDay = java.time.Instant.ofEpochMilli(next).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay(), snoozeCount = 0, lastDismissedAt = now, updatedAt = now))
                                 AndroidAlarmScheduler(context).cancel(id)
                                 AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = next, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
                             }
@@ -198,15 +198,16 @@ class AlarmReceiver : BroadcastReceiver() {
                         }
                         if (id < 0) scheduleRoutineReminders(context, AndroidAlarmScheduler(context))
                     }
-                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED ->
+                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED ->
                         AndroidAlarmScheduler(context).let { scheduler ->
                             repository.observeAlarms().first().forEach(scheduler::schedule)
                             repository.observeActive().first()?.let(scheduler::scheduleTimer)
-                            lifeRepository
-                                .alarms()
-                                .first()
-                                .filter { it.enabled && it.scheduledAt > System.currentTimeMillis() }
-                                .forEach { scheduler.schedule(AlarmDefinition(id = STANDALONE_ALARM_OFFSET + it.id, triggerAt = it.scheduledAt, label = it.label, vibration = it.vibration, sound = it.sound)) }
+                            lifeRepository.alarms().first().filter { it.enabled }.forEach { alarm ->
+                                val adjusted = if (intent.action in setOf(Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED)) localWallClockTrigger(alarm) else alarm.scheduledAt
+                                val trigger = adjusted.coerceAtLeast(System.currentTimeMillis() + 500L)
+                                if (adjusted != alarm.scheduledAt) lifeRepository.save(alarm.copy(scheduledAt = trigger, updatedAt = System.currentTimeMillis()))
+                                scheduler.schedule(AlarmDefinition(id = STANDALONE_ALARM_OFFSET + alarm.id, triggerAt = trigger, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
+                            }
                             lifeRepository
                                 .reminders()
                                 .first()
@@ -406,4 +407,12 @@ fun scheduleRoutineReminders(
         scheduler.scheduleReminder(-102, next(20), "Review your day", NotificationCategory.EVENING_REVIEW)
         scheduler.scheduleReminder(-103, next(18, Calendar.SUNDAY), "Complete your weekly review", NotificationCategory.WEEKLY_REVIEW)
     }
+}
+
+private fun localWallClockTrigger(alarm: com.geepscontrol.core.database.StandaloneAlarmEntity): Long {
+    val zone = java.time.ZoneId.systemDefault()
+    val intendedDate = alarm.localEpochDay?.let(java.time.LocalDate::ofEpochDay)
+        ?: java.time.Instant.ofEpochMilli(alarm.scheduledAt).atZone(zone).toLocalDate()
+    val time = java.time.LocalTime.of(alarm.localHour ?: java.time.Instant.ofEpochMilli(alarm.scheduledAt).atZone(zone).hour, alarm.localMinute ?: java.time.Instant.ofEpochMilli(alarm.scheduledAt).atZone(zone).minute)
+    return java.time.ZonedDateTime.of(intendedDate, time, zone).toInstant().toEpochMilli()
 }

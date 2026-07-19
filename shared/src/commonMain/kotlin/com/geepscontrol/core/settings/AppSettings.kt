@@ -13,4 +13,5 @@ interface AppSettings {
     var quietStartHour: Int
     var quietEndHour: Int
     var onboardingCompleted: Boolean
+    var selectedCalendarIds: Set<Long>
 }

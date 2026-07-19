@@ -142,6 +142,19 @@ data class StandaloneAlarmEntity(
     val snoozeMinutes: Int = 10,
     val profileId: Long? = null,
     @ColumnInfo(defaultValue = "0") val snoozeCount: Int = 0,
+    val soundId: String? = null,
+    val loopSound: Boolean? = null,
+    val vibrationMode: String? = null,
+    val vibrationStartDelaySeconds: Int? = null,
+    val startingVolumePercent: Int? = null,
+    val maximumVolumePercent: Int? = null,
+    val volumeRampSeconds: Int? = null,
+    val maximumSnoozes: Int? = null,
+    val dismissalMethod: String? = null,
+    val dismissalDifficulty: String? = null,
+    val localHour: Int? = null,
+    val localMinute: Int? = null,
+    val localEpochDay: Long? = null,
     val associatedType: String? = null,
     val associatedId: Long? = null,
     val lastTriggeredAt: Long? = null,
@@ -211,6 +224,7 @@ data class AlarmProfileEntity(
     val challengeRequiredForDismiss: Boolean = false,
     val persistentUntilAcknowledged: Boolean = true,
     val builtInKey: String? = null,
+    @ColumnInfo(defaultValue = "0") val isDefault: Boolean = false,
     val createdAt: Long,
     val updatedAt: Long,
 )
@@ -265,6 +279,9 @@ interface LifeItemDao {
 
     @Query("DELETE FROM alarm_profiles WHERE id = :id AND builtInKey IS NULL")
     suspend fun deleteAlarmProfile(id: Long)
+
+    @Query("UPDATE alarm_profiles SET isDefault = CASE WHEN id = :id THEN 1 ELSE 0 END")
+    suspend fun setDefaultAlarmProfile(id: Long)
 
     @Query("SELECT * FROM checklists ORDER BY updatedAt DESC")
     fun observeChecklists(): Flow<List<ChecklistEntity>>
