@@ -23,5 +23,7 @@ interface PlatformActions {
 
     fun deviceCalendarEvents(startAt: Long, endAt: Long, calendarIds: Set<Long>): List<DeviceCalendarEvent>
 
-    fun scheduleTestAlarm(dismissalMethod: String, difficulty: String): Boolean
+    fun launchTestAlarm(dismissalMethod: String, difficulty: String): Boolean
+
+    fun canScheduleExactAlarms(): Boolean
 }

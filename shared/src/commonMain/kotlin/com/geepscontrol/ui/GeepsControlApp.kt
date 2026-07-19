@@ -292,7 +292,10 @@ fun LifeMinderApp(
             },
             snackbarHost = { SnackbarHost(snackbar) },
             floatingActionButton = {
-                FloatingActionButton(onClick = { showQuickAdd = true }) { Text("+") }
+                FloatingActionButton(
+                    onClick = { showQuickAdd = true },
+                    modifier = if (destination == AppDestination.TIMERS) Modifier.padding(bottom = 64.dp) else Modifier,
+                ) { Text("+") }
             },
             bottomBar = {
                 NavigationBar {
@@ -956,6 +959,7 @@ private fun TaskEditorDialog(
     var dueHour by remember(original.id) { mutableStateOf(original.dueAt?.let { ((it - dayKey(it) * DAY_MILLIS) / 3_600_000L).toString() } ?: "9") }
     var dueMinute by remember(original.id) { mutableStateOf(original.dueAt?.let { (((it - dayKey(it) * DAY_MILLIS) / 60_000L) % 60).toString().padStart(2, '0') } ?: "00") }
     var showDuePicker by remember(original.id) { mutableStateOf(false) }
+    var dependencySearch by remember(original.id) { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (original.id == 0L) "New task" else "Edit task") },
@@ -968,7 +972,7 @@ private fun TaskEditorDialog(
                 item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(hasTrip, { checked -> hasTrip = checked; if (!checked) taskTripId = null }); Text("Part of an existing trip?", modifier = Modifier.padding(start = 8.dp)) } }
                 if (hasTrip) item { ChoiceRow("Trip", trips.map { it.id }, taskTripId, { id -> trips.firstOrNull { it.id == id }?.name ?: "Choose trip" }, { taskTripId = it }) }
                 item { PrioritySlider(priority, { priority = it }) }
-                if (!hasTrip) item { ChoiceGrid("Status", TaskStatus.entries.filterNot { it == TaskStatus.ARCHIVED }, status, { it.displayName() }, { status = it }) }
+                if (!hasTrip) item { SelectorField("Status", TaskStatus.entries.filterNot { it == TaskStatus.ARCHIVED }, status, { it.displayName() }, { status = it }, Modifier.fillMaxWidth()) }
                 item { EffortSlider(energy, { energy = it }) }
                 item { OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit) }, label = { Text("Estimated minutes") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
                 item {
@@ -998,9 +1002,18 @@ private fun TaskEditorDialog(
                 }
                 if (availableDependencies.isNotEmpty()) {
                     item {
+                        OutlinedTextField(
+                            dependencySearch,
+                            { dependencySearch = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Search blocking tasks") },
+                            singleLine = true,
+                        )
+                    }
+                    item {
                         ToggleChoices(
                             "Blocked until these tasks are completed",
-                            availableDependencies,
+                            availableDependencies.filter { task -> dependencySearch.isBlank() || task.title.contains(dependencySearch, ignoreCase = true) },
                             dependencyIds,
                             { it.id },
                             { it.title },
@@ -1265,13 +1278,13 @@ private fun MetadataSettingsScreen(
         }
         item { Text("Alarms and timers", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
         item { Text("Alarm profiles, bundled-sound previews, snooze limits, volume ramps, vibration modes, and dismissal methods are managed under Timers → Alarms. Favorite presets and recent timers are under Timers → Timers.") }
-        item { Text("Android 12+ requires Alarms & reminders access for dependable exact timers. Life Minder requests this system permission when unavailable.", style = MaterialTheme.typography.bodySmall) }
+        if (!platformActions.canScheduleExactAlarms()) item { Text("Android 12+ requires Alarms & reminders access for dependable exact timers. Life Minder requests this system permission when unavailable.", style = MaterialTheme.typography.bodySmall) }
         item { Text("Test alarm screen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
-        item { Text("Schedule the real alarm screen three seconds from now without saving an alarm.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Open the real alarm screen immediately without saving an alarm.", style = MaterialTheme.typography.bodySmall) }
         item { SelectorField("Challenge", listOf("STANDARD", "HOLD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC"), testAlarmMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { testAlarmMethod = it }, Modifier.fillMaxWidth()) }
         if (testAlarmMethod != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), testAlarmDifficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { testAlarmDifficulty = it }, Modifier.fillMaxWidth()) }
         item {
-            Button(onClick = { testAlarmStatus = if (platformActions.scheduleTestAlarm(testAlarmMethod, testAlarmDifficulty)) "Test alarm scheduled for 3 seconds from now." else "Could not schedule the test alarm." }, modifier = Modifier.fillMaxWidth()) { Text("Test in 3 seconds") }
+            Button(onClick = { testAlarmStatus = if (platformActions.launchTestAlarm(testAlarmMethod, testAlarmDifficulty)) "Test alarm opened." else "Could not open the test alarm." }, modifier = Modifier.fillMaxWidth()) { Text("Open test alarm now") }
         }
         if (testAlarmStatus.isNotBlank()) item { Text(testAlarmStatus, style = MaterialTheme.typography.bodySmall) }
         item { Text("Device calendars", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }

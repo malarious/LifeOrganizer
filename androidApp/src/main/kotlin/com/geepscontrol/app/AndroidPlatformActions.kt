@@ -14,7 +14,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.provider.CalendarContract
 import android.app.AlarmManager
-import android.app.PendingIntent
 import androidx.core.content.ContextCompat
 
 class AndroidPlatformActions(
@@ -78,7 +77,7 @@ class AndroidPlatformActions(
         }.getOrDefault(emptyList())
     }
 
-    override fun scheduleTestAlarm(dismissalMethod: String, difficulty: String): Boolean = runCatching {
+    override fun launchTestAlarm(dismissalMethod: String, difficulty: String): Boolean = runCatching {
         val intent = Intent(context, AlarmActivity::class.java)
             .putExtra(AlarmReceiver.EXTRA_ID, TEST_ALARM_ID)
             .putExtra(AlarmReceiver.EXTRA_LABEL, "Test $dismissalMethod alarm")
@@ -94,13 +93,12 @@ class AndroidPlatformActions(
             .putExtra(AlarmReceiver.EXTRA_DISMISSAL_METHOD, dismissalMethod)
             .putExtra(AlarmReceiver.EXTRA_DISMISSAL_DIFFICULTY, difficulty)
             .putExtra(AlarmReceiver.EXTRA_SNOOZE_AVAILABLE, false)
-        val pending = PendingIntent.getActivity(context, TEST_ALARM_REQUEST, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val manager = context.getSystemService(AlarmManager::class.java)
-        val at = System.currentTimeMillis() + 3_000L
-        if (android.os.Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-        else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         true
     }.getOrDefault(false)
+
+    override fun canScheduleExactAlarms(): Boolean =
+        android.os.Build.VERSION.SDK_INT < 31 || context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
 
     private fun open(intent: Intent): Boolean =
         runCatching {
@@ -110,6 +108,5 @@ class AndroidPlatformActions(
 
     private companion object {
         const val TEST_ALARM_ID = -99_999L
-        const val TEST_ALARM_REQUEST = 99_999
     }
 }
