@@ -643,15 +643,18 @@ fun LifeMinderApp(
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     fun close(action: () -> Unit) { showQuickAdd = false; action() }
+                    val purple = ButtonDefaults.buttonColors(containerColor = Color(0xFF6542B5), contentColor = Color.White)
+                    val timeColor = ButtonDefaults.buttonColors(containerColor = Color(0xFFA94700), contentColor = Color.White)
+                    val scheduleColor = ButtonDefaults.buttonColors(containerColor = Color(0xFF006B5F), contentColor = Color.White)
                     Button(onClick = { close { pendingTripTaskId = selectedTripId.takeIf { destination == AppDestination.TRIPS }; taskBeingEdited = Task(title = "", projectId = selectedProject?.id, status = if (selectedProject == null) TaskStatus.INBOX else TaskStatus.READY) } }, modifier = Modifier.fillMaxWidth()) { Text(if (selectedTripId != null && destination == AppDestination.TRIPS) "Trip task" else "Task") }
-                    Button(onClick = { close { destination = AppDestination.TIMERS; timerCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Timer") }
-                    OutlinedButton(onClick = { close { lifeItemQuickType = "Reminder"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text("Reminder") }
-                    OutlinedButton(onClick = { close { lifeItemQuickType = "Event"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text("Event") }
-                    OutlinedButton(onClick = { close { lifeItemQuickType = "Routine"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text("Routine") }
-                    OutlinedButton(onClick = { close { destination = AppDestination.TIMERS; alarmCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Alarm") }
-                    TextButton(onClick = { close { projectBeingEdited = Project(name = "") } }, modifier = Modifier.fillMaxWidth()) { Text("Project") }
-                    TextButton(onClick = { close { selectedTripId = null; destination = AppDestination.TRIPS } }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
-                    if (destination == AppDestination.TRIPS && selectedTripId != null) TextButton(onClick = { close { tripEntryRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Place") }
+                    Button(onClick = { close { projectBeingEdited = Project(name = "") } }, modifier = Modifier.fillMaxWidth(), colors = purple) { Text("Project") }
+                    Button(onClick = { close { lifeItemQuickType = "Reminder"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = purple) { Text("Reminder") }
+                    Button(onClick = { close { destination = AppDestination.TIMERS; timerCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth(), colors = timeColor) { Text("Timer") }
+                    Button(onClick = { close { destination = AppDestination.TIMERS; alarmCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth(), colors = timeColor) { Text("Alarm") }
+                    Button(onClick = { close { lifeItemQuickType = "Event"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Event") }
+                    Button(onClick = { close { lifeItemQuickType = "Routine"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Routine") }
+                    OutlinedButton(onClick = { close { selectedTripId = null; destination = AppDestination.TRIPS } }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
+                    if (destination == AppDestination.TRIPS && selectedTripId != null) OutlinedButton(onClick = { close { tripEntryRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Place") }
                 }
             },
             confirmButton = {},
