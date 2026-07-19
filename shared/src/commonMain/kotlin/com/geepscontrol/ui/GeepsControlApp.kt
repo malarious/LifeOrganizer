@@ -221,7 +221,7 @@ fun LifeMinderApp(
         routines.filter { it.active && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { routine ->
             if (routineOccurrences.none { it.routineId == routine.id && it.scheduledAt in dayStart until dayStart + DAY_MILLIS }) lifeItemRepository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = dayStart + (routine.preferredTimeMinutes ?: 9 * 60) * 60_000L, createdAt = generatedAt, updatedAt = generatedAt))
         }
-        medications.filter { it.active && !it.asNeeded && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
+        medications.filter { it.active && !it.asNeeded && it.scheduleType != "ONCE" && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
             val minutes =
                 medication.timesOfDay
                     .split(',')
@@ -352,6 +352,11 @@ fun LifeMinderApp(
                             destination = AppDestination.TRIPS
                         },
                         onOpenChecklist = { selectedChecklistId = it },
+                        onNewProject = { projectBeingEdited = Project(name = "") },
+                        onNewTrip = {
+                            selectedTripId = null
+                            destination = AppDestination.TRIPS
+                        },
                         padding = padding,
                     )
                 destination == AppDestination.SETTINGS ->
@@ -816,11 +821,18 @@ private fun ProjectListScreen(
     onEdit: (Project) -> Unit,
     onOpenTrip: (Long) -> Unit,
     onOpenChecklist: (Long) -> Unit,
+    onNewProject: () -> Unit,
+    onNewTrip: () -> Unit,
     padding: PaddingValues,
 ) {
     var query by remember { mutableStateOf("") }
     val filtered = projects.filter { query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true) }
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("New", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onNewProject, modifier = Modifier.weight(1f)) { Text("Project") }
+            OutlinedButton(onClick = onNewTrip, modifier = Modifier.weight(1f)) { Text("Trip") }
+        }
         OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search plans") }, singleLine = true)
         if (trips.isNotEmpty()) Text("Trips", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         trips.filter { query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true) }.forEach { trip ->
@@ -2118,6 +2130,7 @@ private fun UpcomingScreen(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun LifeItemsScreen(
     reminders: List<ReminderEntity>,
     routines: List<RoutineEntity>,
@@ -2135,13 +2148,16 @@ private fun LifeItemsScreen(
 ) {
     var title by remember { mutableStateOf("") }
     var type by remember(initialType) { mutableStateOf(initialType) }
-    var delayMinutes by remember { mutableStateOf("60") }
     var durationMinutes by remember { mutableStateOf("10") }
     var details by remember { mutableStateOf("") }
     var timezone by remember { mutableStateOf("America/New_York") }
     var recurring by remember { mutableStateOf(false) }
+    val initialScheduleAt = remember { currentTimeMillis() + 60 * 60_000L }
+    var scheduledDate by remember { mutableStateOf(dayKey(initialScheduleAt) * DAY_MILLIS) }
+    var scheduleHour by remember { mutableStateOf(((initialScheduleAt % DAY_MILLIS) / 3_600_000L).toString()) }
+    var scheduleMinute by remember { mutableStateOf((((initialScheduleAt % DAY_MILLIS) / 60_000L) % 60).toString().padStart(2, '0')) }
+    var showScheduleDatePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val now = currentTimeMillis()
     val types = listOf("Reminder", "Routine", "Medication", "Event", "Alarm", "Timer")
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
         item { Text("Quick add", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
@@ -2149,10 +2165,18 @@ private fun LifeItemsScreen(
         item { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { types.drop(3).forEach { value -> OutlinedButton(onClick = { type = value }) { Text(if (type == value) "$value ✓" else value) } } } }
         item { OutlinedTextField(title, { title = it }, label = { Text("$type name") }, modifier = Modifier.fillMaxWidth()) }
         item { OutlinedTextField(details, { details = it }, label = { Text(if (type == "Medication") "Dosage / instructions" else "Description / notes") }, modifier = Modifier.fillMaxWidth()) }
-        if (type !in listOf("Routine", "Timer")) item { OutlinedTextField(delayMinutes, { delayMinutes = it.filter(Char::isDigit) }, label = { Text("Minutes from now") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
+        if (type != "Timer") {
+            item { OutlinedButton(onClick = { showScheduleDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Date: ${formatDate(scheduledDate)}") } }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(scheduleHour, { scheduleHour = it.filter(Char::isDigit).take(2) }, label = { Text("Hour (0–23)") }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    OutlinedTextField(scheduleMinute, { scheduleMinute = it.filter(Char::isDigit).take(2) }, label = { Text("Minute") }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
+            }
+        }
         if (type in listOf("Timer", "Event")) item { OutlinedTextField(durationMinutes, { durationMinutes = it.filter(Char::isDigit) }, label = { Text("Duration minutes") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
         if (type == "Event") item { OutlinedTextField(timezone, { timezone = it }, label = { Text("IANA time zone") }, modifier = Modifier.fillMaxWidth()) }
-        if (type in listOf("Reminder", "Routine", "Medication", "Event", "Alarm")) {
+        if (type in listOf("Reminder", "Medication", "Event", "Alarm")) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(recurring, { recurring = it })
@@ -2160,12 +2184,14 @@ private fun LifeItemsScreen(
                 }
             }
         }
+        if (type == "Routine") item { Text("Repeats daily at the selected time", style = MaterialTheme.typography.bodySmall) }
         if (type == "Medication") item { Text("Life Minder provides reminders and personal records only. Do not rely on it as the sole safeguard for time-critical medication.", style = MaterialTheme.typography.bodySmall) }
         item {
             Button(onClick = {
                 if (title.isNotBlank()) {
                     scope.launch {
-                        val scheduledAt = now + (delayMinutes.toLongOrNull() ?: 60L).coerceAtLeast(1) * 60_000L
+                        val now = currentTimeMillis()
+                        val scheduledAt = scheduledDate + (scheduleHour.toIntOrNull() ?: 9).coerceIn(0, 23) * 3_600_000L + (scheduleMinute.toIntOrNull() ?: 0).coerceIn(0, 59) * 60_000L
                         val rule = if (recurring) "1:DAY:FIXED" else null
                         when (type) {
                             "Reminder" -> {
@@ -2173,12 +2199,13 @@ private fun LifeItemsScreen(
                                 alarmScheduler.scheduleReminder(1_000_000 + id, scheduledAt, title, NotificationCategory.TASK_REMINDER)
                             }
                             "Routine" -> {
-                                val id = repository.save(RoutineEntity(title = title, description = details, recurrenceRule = "1:DAY:FIXED", preferredTimeMinutes = ((now - dayKey(now) * DAY_MILLIS) / 60_000).toInt(), startDate = dayKey(now) * DAY_MILLIS, createdAt = now, updatedAt = now))
-                                repository.save(RoutineOccurrenceEntity(routineId = id, scheduledAt = now, createdAt = now, updatedAt = now))
+                                val preferredMinutes = ((scheduledAt - dayKey(scheduledAt) * DAY_MILLIS) / 60_000).toInt()
+                                val id = repository.save(RoutineEntity(title = title, description = details, recurrenceRule = "1:DAY:FIXED", preferredTimeMinutes = preferredMinutes, startDate = dayKey(scheduledAt) * DAY_MILLIS, createdAt = now, updatedAt = now))
+                                repository.save(RoutineOccurrenceEntity(routineId = id, scheduledAt = scheduledAt, createdAt = now, updatedAt = now))
                             }
                             "Medication" -> {
                                 val minutes = ((scheduledAt - dayKey(scheduledAt) * DAY_MILLIS) / 60_000).toInt()
-                                val id = repository.save(MedicationEntity(name = title, dosageText = details, instructions = details, recurrenceRule = rule, timesOfDay = minutes.toString(), startDate = dayKey(now) * DAY_MILLIS, createdAt = now, updatedAt = now))
+                                val id = repository.save(MedicationEntity(name = title, dosageText = details, instructions = details, scheduleType = if (recurring) "DAILY" else "ONCE", recurrenceRule = rule, timesOfDay = minutes.toString(), startDate = dayKey(scheduledAt) * DAY_MILLIS, createdAt = now, updatedAt = now))
                                 repository.save(MedicationOccurrenceEntity(medicationId = id, scheduledAt = scheduledAt, createdAt = now, updatedAt = now))
                                 alarmScheduler.scheduleReminder(2_000_000 + id, scheduledAt, title, NotificationCategory.TASK_REMINDER)
                             }
@@ -2218,7 +2245,7 @@ private fun LifeItemsScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.title, fontWeight = FontWeight.SemiBold)
-                    Text("Reminder · ${value.status.lowercase()}")
+                    Text("Reminder · ${value.status.lowercase()} · ${formatAlarmTime(value.scheduledAt)}")
                     Row {
                         TextButton(onClick = {
                             scope.launch {
@@ -2240,6 +2267,7 @@ private fun LifeItemsScreen(
                 Column(Modifier.padding(12.dp)) {
                     Text(value.title, fontWeight = FontWeight.SemiBold)
                     Text("Routine · ${if (value.active) "active" else "paused"} · $completedCount completed · $completionRate% rate")
+                    routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { Text("Next: ${formatAlarmTime(it.scheduledAt)}", style = MaterialTheme.typography.bodySmall) }
                     Row {
                         TextButton(onClick = { scope.launch { routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { repository.save(it.copy(status = "COMPLETED", recordedAt = currentTimeMillis(), updatedAt = currentTimeMillis())) } } }) { Text("Done") }
                         TextButton(onClick = { scope.launch { routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { repository.save(it.copy(status = "SKIPPED", recordedAt = currentTimeMillis(), updatedAt = currentTimeMillis())) } } }) { Text("Skip") }
@@ -2253,6 +2281,7 @@ private fun LifeItemsScreen(
                 Column(Modifier.padding(12.dp)) {
                     Text(value.name, fontWeight = FontWeight.SemiBold)
                     Text("Medication · ${if (value.active) "active" else "paused"}${value.quantityRemaining?.let { " · $it remaining" }.orEmpty()}")
+                    medicationOccurrences.firstOrNull { it.medicationId == value.id && it.status in setOf("DUE", "SNOOZED") }?.let { Text("Next: ${formatAlarmTime(it.snoozedUntil ?: it.scheduledAt)}", style = MaterialTheme.typography.bodySmall) }
                     Row {
                         TextButton(onClick = {
                             scope.launch {
@@ -2289,7 +2318,7 @@ private fun LifeItemsScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.title, fontWeight = FontWeight.SemiBold)
-                    Text("Event · ${value.status.lowercase()} · ${value.timezone}")
+                    Text("Event · ${value.status.lowercase()} · ${formatAlarmTime(value.startAt)} · ${value.timezone}")
                 }
             }
         }
@@ -2297,7 +2326,7 @@ private fun LifeItemsScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.label, fontWeight = FontWeight.SemiBold)
-                    Text("Alarm · ${if (value.enabled) "enabled" else "disabled"}")
+                    Text("Alarm · ${if (value.enabled) "enabled" else "disabled"} · ${formatAlarmTime(value.scheduledAt)}")
                     TextButton(onClick = {
                         scope.launch {
                             repository.setAlarmEnabled(value.id, !value.enabled, currentTimeMillis())
@@ -2351,6 +2380,14 @@ private fun LifeItemsScreen(
             }
         }
     }
+    if (showScheduleDatePicker) {
+        val picker = rememberDatePickerState(initialSelectedDateMillis = scheduledDate)
+        DatePickerDialog(
+            onDismissRequest = { showScheduleDatePicker = false },
+            confirmButton = { TextButton(onClick = { scheduledDate = picker.selectedDateMillis ?: scheduledDate; showScheduleDatePicker = false }) { Text("Set date") } },
+            dismissButton = { TextButton(onClick = { showScheduleDatePicker = false }) { Text("Cancel") } },
+        ) { DatePicker(picker) }
+    }
     LaunchedEffect(routines, medications, routineOccurrences, medicationOccurrences) {
         val generatedAt = currentTimeMillis()
         val dayStart = dayKey(generatedAt) * DAY_MILLIS
@@ -2359,7 +2396,7 @@ private fun LifeItemsScreen(
                 repository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = dayStart + (routine.preferredTimeMinutes ?: 9 * 60) * 60_000L, createdAt = generatedAt, updatedAt = generatedAt))
             }
         }
-        medications.filter { it.active && !it.asNeeded && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
+        medications.filter { it.active && !it.asNeeded && it.scheduleType != "ONCE" && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
             val minutes =
                 medication.timesOfDay
                     .split(',')
