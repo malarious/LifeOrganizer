@@ -3,6 +3,8 @@ package com.geepscontrol.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -164,7 +166,6 @@ fun LifeMinderApp(
     var showOnboarding by remember { mutableStateOf(!appSettings.onboardingCompleted) }
     var showTopMenu by remember { mutableStateOf(false) }
     var showQuickAdd by remember { mutableStateOf(false) }
-    var showQuickAddMore by remember { mutableStateOf(false) }
     var lifeItemQuickType by remember { mutableStateOf("Reminder") }
     var themeMode by remember { mutableStateOf(appSettings.themeMode) }
     val projects by projectRepository.observeProjects().collectAsState(emptyList())
@@ -291,7 +292,7 @@ fun LifeMinderApp(
             },
             snackbarHost = { SnackbarHost(snackbar) },
             floatingActionButton = {
-                FloatingActionButton(onClick = { showQuickAddMore = false; showQuickAdd = true }) { Text("+") }
+                FloatingActionButton(onClick = { showQuickAdd = true }) { Text("+") }
             },
             bottomBar = {
                 NavigationBar {
@@ -640,20 +641,17 @@ fun LifeMinderApp(
             onDismissRequest = { showQuickAdd = false },
             title = { Text("Quick add") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     fun close(action: () -> Unit) { showQuickAdd = false; action() }
                     Button(onClick = { close { pendingTripTaskId = selectedTripId.takeIf { destination == AppDestination.TRIPS }; taskBeingEdited = Task(title = "", projectId = selectedProject?.id, status = if (selectedProject == null) TaskStatus.INBOX else TaskStatus.READY) } }, modifier = Modifier.fillMaxWidth()) { Text(if (selectedTripId != null && destination == AppDestination.TRIPS) "Trip task" else "Task") }
                     Button(onClick = { close { destination = AppDestination.TIMERS; timerCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Timer") }
                     OutlinedButton(onClick = { close { lifeItemQuickType = "Reminder"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text("Reminder") }
                     OutlinedButton(onClick = { close { lifeItemQuickType = "Event"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text("Event") }
-                    if (!showQuickAddMore) TextButton(onClick = { showQuickAddMore = true }, modifier = Modifier.fillMaxWidth()) { Text("More") }
-                    if (showQuickAddMore) {
-                        listOf("Routine", "Medication").forEach { label -> TextButton(onClick = { close { lifeItemQuickType = label; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text(label) } }
-                        TextButton(onClick = { close { destination = AppDestination.TIMERS; alarmCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Alarm") }
-                        TextButton(onClick = { close { projectBeingEdited = Project(name = "") } }, modifier = Modifier.fillMaxWidth()) { Text("Project") }
-                        TextButton(onClick = { close { selectedTripId = null; destination = AppDestination.TRIPS } }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
-                        if (destination == AppDestination.TRIPS && selectedTripId != null) TextButton(onClick = { close { tripEntryRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Place") }
-                    }
+                    OutlinedButton(onClick = { close { lifeItemQuickType = "Routine"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth()) { Text("Routine") }
+                    OutlinedButton(onClick = { close { destination = AppDestination.TIMERS; alarmCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Alarm") }
+                    TextButton(onClick = { close { projectBeingEdited = Project(name = "") } }, modifier = Modifier.fillMaxWidth()) { Text("Project") }
+                    TextButton(onClick = { close { selectedTripId = null; destination = AppDestination.TRIPS } }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
+                    if (destination == AppDestination.TRIPS && selectedTripId != null) TextButton(onClick = { close { tripEntryRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Place") }
                 }
             },
             confirmButton = {},
@@ -2292,7 +2290,7 @@ private fun LifeItemsScreen(
     var scheduleMinute by remember { mutableStateOf((((initialScheduleAt % DAY_MILLIS) / 60_000L) % 60).toString().padStart(2, '0')) }
     var showScheduleDatePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val types = listOf("Reminder", "Routine", "Medication", "Event", "Alarm", "Timer")
+    val types = listOf("Reminder", "Routine", "Event", "Alarm", "Timer")
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
         item { Text("Quick add", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { types.take(3).forEach { value -> OutlinedButton(onClick = { type = value }) { Text(if (type == value) "$value ✓" else value) } } } }
@@ -2937,9 +2935,14 @@ private fun DoNowScreen(
     onSavePlan: (DailyPlanItem) -> Unit,
     padding: PaddingValues,
 ) {
-    var minutes by remember { mutableStateOf(5) }
+    var minutes by remember { mutableStateOf(30) }
     var energy by remember { mutableStateOf(EnergyRequirement.MEDIUM) }
-    val recommendations = RecommendationService.rank(tasks, plan, RecommendationContext(now, minutes, energy))
+    LaunchedEffect(Unit) { minutes = 30; energy = EnergyRequirement.MEDIUM }
+    val rankedTasks = RecommendationService.rank(tasks, plan, RecommendationContext(now, availableMinutes = null, energy = energy))
+    val matchingTasks = rankedTasks.filter { recommendation ->
+        (recommendation.task.estimatedMinutes == null || recommendation.task.estimatedMinutes <= minutes) && recommendation.task.energyRequirement.ordinal <= energy.ordinal
+    }
+    val otherTasks = rankedTasks.filterNot { it in matchingTasks }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -2959,44 +2962,34 @@ private fun DoNowScreen(
                 EffortSlider(energy, { energy = it })
             }
         }
-        if (recommendations.isEmpty()) item { Text("No eligible tasks fit these controls. Add a ready task or broaden the time available.") }
-        items(recommendations.take(10), key = { it.task.id }) { recommendation ->
-            val overdueColor = MaterialTheme.colorScheme.error
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text(recommendation.task.title, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onEdit(recommendation.task) })
-                    Text(
-                        buildAnnotatedString {
-                            append("Score ${recommendation.score}")
-                            recommendation.reasons.forEach { reason ->
-                                append(" · ")
-                                if (reason.equals("overdue", ignoreCase = true)) {
-                                    withStyle(SpanStyle(color = overdueColor, fontWeight = FontWeight.Bold)) { append("overdue!") }
-                                } else {
-                                    append(reason)
-                                }
+        fun androidx.compose.foundation.lazy.LazyListScope.taskSection(title: String, rows: List<com.geepscontrol.core.domain.Recommendation>, matches: Boolean) {
+            item { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp)) }
+            if (rows.isEmpty()) item { Text(if (matches) "No tasks currently match both your time and energy." else "No other eligible tasks.", style = MaterialTheme.typography.bodySmall) }
+            items(rows.take(10), key = { "$title-${it.task.id}" }) { recommendation ->
+                val overdueColor = MaterialTheme.colorScheme.error
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(recommendation.task.title, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onEdit(recommendation.task) })
+                        if (!matches) {
+                            val mismatches = buildList {
+                                recommendation.task.estimatedMinutes?.takeIf { it > minutes }?.let { add("needs about $it minutes") }
+                                if (recommendation.task.energyRequirement.ordinal > energy.ordinal) add("needs ${recommendation.task.energyRequirement.displayName().lowercase()} energy")
                             }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(onClick = {
-                            onFeedback(recommendation.task.id, RecommendationAction.STARTED)
-                            onStart(recommendation.task)
-                        }) { Text("Start") }
-                        OutlinedButton(onClick = { onComplete(recommendation.task) }) { Text("Done") }
-                        TextButton(onClick = {
-                            onFeedback(recommendation.task.id, RecommendationAction.DEFERRED)
-                            onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, dayKey(now))).copy(deferredUntil = now + 60 * 60 * 1000L))
-                        }) { Text("Later") }
-                        TextButton(onClick = {
-                            onFeedback(recommendation.task.id, RecommendationAction.HIDDEN)
-                            onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, dayKey(now))).copy(hidden = true))
-                        }) { Text("Hide") }
+                            Text("Does not match current settings${mismatches.takeIf { it.isNotEmpty() }?.joinToString(prefix = ": ").orEmpty()}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(buildAnnotatedString { append("Score ${recommendation.score}"); recommendation.reasons.forEach { reason -> append(" · "); if (reason.equals("overdue", true)) withStyle(SpanStyle(color = overdueColor, fontWeight = FontWeight.Bold)) { append("overdue!") } else append(reason) } }, style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(onClick = { onFeedback(recommendation.task.id, RecommendationAction.STARTED); onStart(recommendation.task) }) { Text("Start") }
+                            OutlinedButton(onClick = { onComplete(recommendation.task) }) { Text("Done") }
+                            TextButton(onClick = { onFeedback(recommendation.task.id, RecommendationAction.DEFERRED); onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, dayKey(now))).copy(deferredUntil = now + 60 * 60 * 1000L)) }) { Text("Later") }
+                            TextButton(onClick = { onFeedback(recommendation.task.id, RecommendationAction.HIDDEN); onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, dayKey(now))).copy(hidden = true)) }) { Text("Hide") }
+                        }
                     }
                 }
             }
         }
+        taskSection("Matching Tasks", matchingTasks, true)
+        taskSection("Other Tasks", otherTasks, false)
     }
 }
 
