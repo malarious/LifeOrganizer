@@ -13,6 +13,8 @@ import com.geepscontrol.core.domain.DeviceCalendarEvent
 import android.Manifest
 import android.content.pm.PackageManager
 import android.provider.CalendarContract
+import android.app.AlarmManager
+import android.app.PendingIntent
 import androidx.core.content.ContextCompat
 
 class AndroidPlatformActions(
@@ -76,9 +78,38 @@ class AndroidPlatformActions(
         }.getOrDefault(emptyList())
     }
 
+    override fun scheduleTestAlarm(dismissalMethod: String, difficulty: String): Boolean = runCatching {
+        val intent = Intent(context, AlarmActivity::class.java)
+            .putExtra(AlarmReceiver.EXTRA_ID, TEST_ALARM_ID)
+            .putExtra(AlarmReceiver.EXTRA_LABEL, "Test $dismissalMethod alarm")
+            .putExtra(AlarmReceiver.EXTRA_IS_TIMER, true)
+            .putExtra(AlarmReceiver.EXTRA_SOUND, true)
+            .putExtra(AlarmReceiver.EXTRA_VIBRATION, true)
+            .putExtra(AlarmReceiver.EXTRA_SOUND_ID, "standard_steel")
+            .putExtra(AlarmReceiver.EXTRA_LOOP_SOUND, true)
+            .putExtra(AlarmReceiver.EXTRA_VIBRATION_MODE, "STANDARD")
+            .putExtra(AlarmReceiver.EXTRA_START_VOLUME, 30)
+            .putExtra(AlarmReceiver.EXTRA_MAX_VOLUME, 100)
+            .putExtra(AlarmReceiver.EXTRA_RAMP_SECONDS, 10)
+            .putExtra(AlarmReceiver.EXTRA_DISMISSAL_METHOD, dismissalMethod)
+            .putExtra(AlarmReceiver.EXTRA_DISMISSAL_DIFFICULTY, difficulty)
+            .putExtra(AlarmReceiver.EXTRA_SNOOZE_AVAILABLE, false)
+        val pending = PendingIntent.getActivity(context, TEST_ALARM_REQUEST, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val manager = context.getSystemService(AlarmManager::class.java)
+        val at = System.currentTimeMillis() + 3_000L
+        if (android.os.Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+        else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+        true
+    }.getOrDefault(false)
+
     private fun open(intent: Intent): Boolean =
         runCatching {
             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             true
         }.getOrDefault(false)
+
+    private companion object {
+        const val TEST_ALARM_ID = -99_999L
+        const val TEST_ALARM_REQUEST = 99_999
+    }
 }

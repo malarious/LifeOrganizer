@@ -22,4 +22,6 @@ interface PlatformActions {
     fun deviceCalendars(): List<DeviceCalendar>
 
     fun deviceCalendarEvents(startAt: Long, endAt: Long, calendarIds: Set<Long>): List<DeviceCalendarEvent>
+
+    fun scheduleTestAlarm(dismissalMethod: String, difficulty: String): Boolean
 }

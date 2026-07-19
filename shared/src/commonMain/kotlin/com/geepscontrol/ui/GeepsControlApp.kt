@@ -379,6 +379,7 @@ fun LifeMinderApp(
                         deviceCalendars = deviceCalendars,
                         selectedCalendarIds = selectedCalendarIds,
                         onSelectedCalendarIds = { selectedCalendarIds = it; appSettings.selectedCalendarIds = it },
+                        platformActions = platformActions,
                         padding = padding,
                     )
                 destination == AppDestination.TODAY ->
@@ -1207,6 +1208,7 @@ private fun MetadataSettingsScreen(
     deviceCalendars: List<DeviceCalendar>,
     selectedCalendarIds: Set<Long>,
     onSelectedCalendarIds: (Set<Long>) -> Unit,
+    platformActions: PlatformActions,
     padding: PaddingValues,
 ) {
     var contextName by remember { mutableStateOf("") }
@@ -1220,6 +1222,9 @@ private fun MetadataSettingsScreen(
     var quietHours by remember { mutableStateOf(appSettings.quietHoursEnabled) }
     var dataStatus by remember { mutableStateOf("") }
     var pendingDanger by remember { mutableStateOf<String?>(null) }
+    var testAlarmMethod by remember { mutableStateOf("STANDARD") }
+    var testAlarmDifficulty by remember { mutableStateOf("NORMAL") }
+    var testAlarmStatus by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
@@ -1260,6 +1265,14 @@ private fun MetadataSettingsScreen(
         item { Text("Alarms and timers", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
         item { Text("Alarm profiles, bundled-sound previews, snooze limits, volume ramps, vibration modes, and dismissal methods are managed under Timers → Alarms. Favorite presets and recent timers are under Timers → Timers.") }
         item { Text("Android 12+ requires Alarms & reminders access for dependable exact timers. Life Minder requests this system permission when unavailable.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Test alarm screen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+        item { Text("Schedule the real alarm screen three seconds from now without saving an alarm.", style = MaterialTheme.typography.bodySmall) }
+        item { SelectorField("Challenge", listOf("STANDARD", "HOLD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC"), testAlarmMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { testAlarmMethod = it }, Modifier.fillMaxWidth()) }
+        if (testAlarmMethod != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), testAlarmDifficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { testAlarmDifficulty = it }, Modifier.fillMaxWidth()) }
+        item {
+            Button(onClick = { testAlarmStatus = if (platformActions.scheduleTestAlarm(testAlarmMethod, testAlarmDifficulty)) "Test alarm scheduled for 3 seconds from now." else "Could not schedule the test alarm." }, modifier = Modifier.fillMaxWidth()) { Text("Test in 3 seconds") }
+        }
+        if (testAlarmStatus.isNotBlank()) item { Text(testAlarmStatus, style = MaterialTheme.typography.bodySmall) }
         item { Text("Device calendars", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
         if (deviceCalendars.isEmpty()) item { Text("No readable device calendars found. Grant Calendar permission and return to Settings.", style = MaterialTheme.typography.bodySmall) }
         items(deviceCalendars, key = { "calendar-${it.id}" }) { calendar ->
