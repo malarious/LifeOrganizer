@@ -69,10 +69,16 @@ class AndroidPlatformActions(
         if (calendarIds.isEmpty() || ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) return emptyList()
         val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also { android.content.ContentUris.appendId(it, startAt); android.content.ContentUris.appendId(it, endAt) }.build()
         val projection = arrayOf(CalendarContract.Instances.EVENT_ID, CalendarContract.Instances.CALENDAR_ID, CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.END, CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION)
-        val placeholders = calendarIds.joinToString(",") { "?" }
         return runCatching {
-            context.contentResolver.query(uri, projection, "${CalendarContract.Instances.CALENDAR_ID} IN ($placeholders)", calendarIds.map(Long::toString).toTypedArray(), CalendarContract.Instances.BEGIN)?.use { cursor ->
-                buildList { while (cursor.moveToNext()) add(DeviceCalendarEvent(cursor.getLong(0), cursor.getLong(1), cursor.getString(2).orEmpty().ifBlank { "Calendar event" }, cursor.getLong(3), cursor.getLong(4), cursor.getInt(5) != 0, cursor.getString(6).orEmpty())) }
+            context.contentResolver.query(uri, projection, null, null, CalendarContract.Instances.BEGIN)?.use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        val calendarId = cursor.getLong(1)
+                        if (calendarId in calendarIds) {
+                            add(DeviceCalendarEvent(cursor.getLong(0), calendarId, cursor.getString(2).orEmpty().ifBlank { "Calendar event" }, cursor.getLong(3), cursor.getLong(4), cursor.getInt(5) != 0, cursor.getString(6).orEmpty()))
+                        }
+                    }
+                }
             }.orEmpty()
         }.getOrDefault(emptyList())
     }

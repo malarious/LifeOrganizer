@@ -632,6 +632,7 @@ fun LifeMinderApp(
                         dataFiles = dataFiles,
                         deviceCalendars = deviceCalendars,
                         selectedCalendarIds = selectedCalendarIds,
+                        loadedCalendarEventCount = deviceCalendarEvents.size,
                         onSelectedCalendarIds = { selectedCalendarIds = it; appSettings.selectedCalendarIds = it },
                         calendarPrivacyMode = calendarPrivacyMode,
                         onCalendarPrivacyMode = { calendarPrivacyMode = it; appSettings.calendarPrivacyMode = it },
@@ -1795,6 +1796,7 @@ private fun MetadataSettingsScreen(
     dataFiles: DataFileGateway,
     deviceCalendars: List<DeviceCalendar>,
     selectedCalendarIds: Set<Long>,
+    loadedCalendarEventCount: Int,
     onSelectedCalendarIds: (Set<Long>) -> Unit,
     calendarPrivacyMode: Boolean,
     onCalendarPrivacyMode: (Boolean) -> Unit,
@@ -1898,6 +1900,19 @@ private fun MetadataSettingsScreen(
                 Column {
                     Text(calendar.name)
                     Text(if (calendarPrivacyMode) CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER else calendar.accountName, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (deviceCalendars.isNotEmpty()) {
+            item {
+                Text(
+                    "${selectedCalendarIds.size} calendar(s) selected • $loadedCalendarEventCount event(s) loaded for the next 31 days",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            item {
+                OutlinedButton(onClick = onRefreshDeviceCalendars, modifier = Modifier.fillMaxWidth()) {
+                    Text("Refresh device calendars and events")
                 }
             }
         }
@@ -2767,13 +2782,24 @@ private fun UnifiedTodayScreen(
     val now = currentTimeMillis()
     val todayStart = dayKey(now) * DAY_MILLIS
     val todayEnd = todayStart + DAY_MILLIS
-    val visible = timeline.filter { (it.startAt == null || it.startAt in todayStart until todayEnd || (it.actionable && it.startAt < todayStart)) && (!hideFinished || it.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")) }
-    val nowItems = visible.filter { it.type == com.geepscontrol.core.domain.TimelineItemType.TIMER || (it.startAt != null && it.startAt >= todayStart && it.startAt <= now && (it.endAt == null || it.endAt >= now)) }
-    val upcoming = visible.filter { it.startAt in (now + 1) until todayEnd }
-    val earlier = visible.filter { !it.actionable && it.startAt != null && it.startAt < now && it !in nowItems }
+    fun overlaps(start: Long?, end: Long?, rangeStart: Long, rangeEnd: Long): Boolean =
+        start != null && start < rangeEnd && (end ?: (start + 1)) > rangeStart
+    val visible = timeline.filter { (it.startAt == null || overlaps(it.startAt, it.endAt, todayStart, todayEnd) || (it.actionable && it.startAt < todayStart)) && (!hideFinished || it.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")) }
+    val timedVisible = visible.filterNot { it.allDay }
+    val nowItems = timedVisible.filter { it.type == com.geepscontrol.core.domain.TimelineItemType.TIMER || overlaps(it.startAt, it.endAt, now, now + 1) }
+    val upcoming = timedVisible.filter { it.startAt in (now + 1) until todayEnd }
+    val earlier = timedVisible.filter { !it.actionable && it.startAt != null && it.startAt < now && it !in nowItems }
     val anytime = visible.filter { it.startAt == null || it.allDay }
     val overdue = visible.filter { it.type != TimelineItemType.TIMER && it.actionable && it.startAt != null && it.startAt < todayStart && it.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN") }
     val completed = visible.filter { it.status in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED") }
+    val calendarEventsToday = visible.filter { it.type == TimelineItemType.EVENT && it.status == "CALENDAR" }
+    val nextCalendarEvents = timeline
+        .asSequence()
+        .filter { it.type == TimelineItemType.EVENT && it.status == "CALENDAR" && it.startAt != null && it.startAt >= todayEnd }
+        .sortedBy { it.startAt }
+        .distinctBy { it.id to it.sourceId }
+        .take(3)
+        .toList()
     val conflicts = com.geepscontrol.core.domain.UnifiedTimelineService::class.let { visible.filter { it.endAt != null && it.startAt != null }.flatMapIndexed { index, first -> visible.drop(index + 1).filter { second -> second.endAt != null && second.startAt != null && first.startAt!! < second.endAt!! && second.startAt < first.endAt!! }.map { first to it } } }
     val plannedIds = plan.mapTo(mutableSetOf()) { it.taskId }
     val openTasks = tasks.filter { it.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED) }
@@ -2817,6 +2843,17 @@ private fun UnifiedTodayScreen(
         timelineSection("Anytime today", anytime)
         timelineSection("Overdue action items", overdue)
         timelineSection("Completed or confirmed", completed)
+        if (calendarEventsToday.isEmpty() && nextCalendarEvents.isNotEmpty()) {
+            item { Text("Next calendar events", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(nextCalendarEvents, key = { "next-calendar-${it.sourceId}-${it.id}" }) { row ->
+                Card(Modifier.fillMaxWidth().clickable { onOpenTimeline(row) }) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(row.title, fontWeight = FontWeight.SemiBold)
+                        Text("${formatDate(row.startAt!!)}${row.subtitle.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
         item { Text("Task plan", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
         if (plan.isEmpty()) item { Text("Choose tasks below to add them to today.") }
         items(plan, key = { "planned-${it.taskId}" }) { item ->
