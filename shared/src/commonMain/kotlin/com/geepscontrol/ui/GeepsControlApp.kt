@@ -86,6 +86,7 @@ import com.geepscontrol.core.database.TripEntity
 import com.geepscontrol.core.domain.ActiveTimer
 import com.geepscontrol.core.domain.AlarmDefinition
 import com.geepscontrol.core.domain.AlarmRepeatRule
+import com.geepscontrol.core.domain.AlarmRepeatEngine
 import com.geepscontrol.core.domain.AlarmRepeatUnit
 import com.geepscontrol.core.domain.bundledAlarmSounds
 import com.geepscontrol.core.domain.AlarmScheduler
@@ -104,6 +105,7 @@ import com.geepscontrol.core.domain.RecommendationAction
 import com.geepscontrol.core.domain.RecommendationContext
 import com.geepscontrol.core.domain.RecommendationService
 import com.geepscontrol.core.domain.RecurrenceMode
+import com.geepscontrol.core.domain.RecurrenceEngine
 import com.geepscontrol.core.domain.RecurrenceRule
 import com.geepscontrol.core.domain.RecurrenceUnit
 import com.geepscontrol.core.domain.ReviewRecord
@@ -234,6 +236,36 @@ fun LifeMinderApp(
     val weeklyDeferrals by planningRepository.observeDeferralCount(reviewWeekStart, reviewDayStart + DAY_MILLIS).collectAsState(0)
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val handlesSystemBack =
+        taskBeingEdited != null || medicationBeingEdited != null || projectBeingEdited != null ||
+            selectedCalendarEvent != null || showPlanTypeDialog || showQuickAdd || showNewListDialog ||
+            selectedChecklistId != null || showTripAddDialog || showTimerAddDialog || showTopMenu ||
+            taskBeingViewed != null || medicationBeingViewedId != null || lifeItemBeingViewed != null ||
+            selectedProject != null || selectedTripId != null || destination != AppDestination.TODAY
+    SystemBackHandler(enabled = handlesSystemBack) {
+        when {
+            taskBeingEdited != null -> {
+                taskBeingEdited = null
+                pendingTripTaskId = null
+            }
+            medicationBeingEdited != null -> medicationBeingEdited = null
+            projectBeingEdited != null -> projectBeingEdited = null
+            selectedCalendarEvent != null -> selectedCalendarEvent = null
+            showPlanTypeDialog -> showPlanTypeDialog = false
+            showQuickAdd -> showQuickAdd = false
+            showNewListDialog -> showNewListDialog = false
+            selectedChecklistId != null -> selectedChecklistId = null
+            showTripAddDialog -> showTripAddDialog = false
+            showTimerAddDialog -> showTimerAddDialog = false
+            showTopMenu -> showTopMenu = false
+            taskBeingViewed != null -> taskBeingViewed = null
+            medicationBeingViewedId != null -> medicationBeingViewedId = null
+            lifeItemBeingViewed != null -> lifeItemBeingViewed = null
+            selectedProject != null -> selectedProject = null
+            selectedTripId != null -> selectedTripId = null
+            destination != AppDestination.TODAY -> destination = AppDestination.TODAY
+        }
+    }
     LaunchedEffect(todayKey) {
         lifeItemRepository.removeHistoryBefore(todayKey * DAY_MILLIS)
     }
@@ -256,7 +288,7 @@ fun LifeMinderApp(
         routines.filter { it.active && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { routine ->
             if (routineOccurrences.none { it.routineId == routine.id && it.scheduledAt in dayStart until dayStart + DAY_MILLIS }) lifeItemRepository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = dayStart + (routine.preferredTimeMinutes ?: 9 * 60) * 60_000L, createdAt = generatedAt, updatedAt = generatedAt))
         }
-        medications.filter { it.active && !it.asNeeded && it.scheduleType != "ONCE" && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
+        medications.filter { it.active && !it.asNeeded && (it.scheduleType != "ONCE" || it.recurrenceRule != null) && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
             val minutes =
                 medication.timesOfDay
                     .split(',')
@@ -286,6 +318,70 @@ fun LifeMinderApp(
             }
         }
         completeWithUndo(task, taskRepository, snackbar, scope)
+    }
+    val completeTimelineItem: (TimelineItem) -> Unit = { item ->
+        when (item.type) {
+            TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let(completeTask)
+            else -> scope.launch {
+                val completedAt = currentTimeMillis()
+                when (item.type) {
+                    TimelineItemType.MEDICATION -> {
+                        val occurrence = medicationOccurrences.firstOrNull { it.id == item.id }
+                        val medication = medications.firstOrNull { it.id == item.sourceId }
+                        if (occurrence != null && medication != null) {
+                            lifeItemRepository.save(occurrence.copy(status = "TAKEN", recordedAt = completedAt, dosageTakenText = medication.dosageText, snoozedUntil = null, updatedAt = completedAt))
+                            alarmScheduler.cancelReminder(2_000_000 + occurrence.id)
+                            if (medication.active && (medication.scheduleType != "ONCE" || medication.recurrenceRule != null)) {
+                                var nextAt = occurrence.scheduledAt + DAY_MILLIS
+                                while (nextAt <= completedAt) nextAt += DAY_MILLIS
+                                if (medicationOccurrences.none { it.medicationId == medication.id && it.scheduledAt == nextAt }) {
+                                    val nextId = lifeItemRepository.save(MedicationOccurrenceEntity(medicationId = medication.id, scheduledAt = nextAt, createdAt = completedAt, updatedAt = completedAt))
+                                    alarmScheduler.scheduleReminder(2_000_000 + nextId, nextAt, medication.name, NotificationCategory.TASK_REMINDER)
+                                }
+                            }
+                        }
+                    }
+                    TimelineItemType.ROUTINE -> {
+                        val occurrence = routineOccurrences.firstOrNull { it.id == item.id }
+                        val routine = routines.firstOrNull { it.id == item.sourceId }
+                        if (occurrence != null && routine != null) {
+                            lifeItemRepository.save(occurrence.copy(status = "COMPLETED", recordedAt = completedAt, updatedAt = completedAt))
+                            if (routine.active) {
+                                val rule = RecurrenceRule.decode(routine.recurrenceRule)
+                                val nextAt = rule?.let { RecurrenceEngine.nextTimestamp(it, occurrence.scheduledAt, completedAt) } ?: (occurrence.scheduledAt + DAY_MILLIS)
+                                if (routineOccurrences.none { it.routineId == routine.id && it.scheduledAt == nextAt }) lifeItemRepository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = nextAt, createdAt = completedAt, updatedAt = completedAt))
+                            }
+                        }
+                    }
+                    TimelineItemType.REMINDER -> {
+                        reminders.firstOrNull { it.id == item.sourceId }?.let { reminder ->
+                            lifeItemRepository.reminderStatus(reminder.id, "COMPLETED", completedAt)
+                            alarmScheduler.cancelReminder(1_000_000 + reminder.id)
+                            RecurrenceRule.decode(reminder.recurrenceRule)?.let { rule ->
+                                val nextAt = RecurrenceEngine.nextTimestamp(rule, reminder.scheduledAt, completedAt)
+                                val nextId = lifeItemRepository.save(reminder.copy(id = 0, scheduledAt = nextAt, status = "SCHEDULED", completedAt = null, createdAt = completedAt, updatedAt = completedAt))
+                                alarmScheduler.scheduleReminder(1_000_000 + nextId, nextAt, reminder.title, NotificationCategory.TASK_REMINDER)
+                            }
+                        }
+                    }
+                    TimelineItemType.ALARM -> {
+                        lifeAlarms.firstOrNull { it.id == item.sourceId }?.let { alarm ->
+                            val rule = AlarmRepeatRule.decode(alarm.recurrenceRule)
+                            if (rule == null) {
+                                lifeItemRepository.setAlarmEnabled(alarm.id, false, completedAt)
+                                alarmScheduler.cancel(3_000_000 + alarm.id)
+                            } else {
+                                val nextAt = AlarmRepeatEngine.nextFuture(rule, alarm.scheduledAt, completedAt)
+                                val updated = alarm.copy(scheduledAt = nextAt, updatedAt = completedAt)
+                                lifeItemRepository.save(updated)
+                                alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + alarm.id, triggerAt = nextAt, label = alarm.label))
+                            }
+                        }
+                    }
+                    TimelineItemType.TASK, TimelineItemType.EVENT, TimelineItemType.TIMER, TimelineItemType.ITINERARY -> Unit
+                }
+            }
+        }
     }
 
     val useDarkTheme = when (themeMode) { ThemeMode.DARK -> true; ThemeMode.LIGHT -> false; ThemeMode.SYSTEM -> isSystemInDarkTheme() }
@@ -368,12 +464,62 @@ fun LifeMinderApp(
                         occurrences = medicationOccurrences.filter { it.medicationId == medicationBeingViewed.id },
                         onBack = { medicationBeingViewedId = null },
                         onEdit = { medicationBeingEdited = medicationBeingViewed },
+                        onDone = {
+                            medicationOccurrences
+                                .filter { it.medicationId == medicationBeingViewed.id && it.status in setOf("DUE", "SNOOZED") }
+                                .minByOrNull { it.snoozedUntil ?: it.scheduledAt }
+                                ?.let { occurrence ->
+                                    completeTimelineItem(TimelineItem(occurrence.id, TimelineItemType.MEDICATION, medicationBeingViewed.name, occurrence.snoozedUntil ?: occurrence.scheduledAt, actionable = true, status = occurrence.status, sourceId = medicationBeingViewed.id))
+                                }
+                            medicationBeingViewedId = null
+                        },
+                        onDelete = {
+                            medicationBeingViewed?.let { medication ->
+                                scope.launch {
+                                    alarmScheduler.cancelReminder(2_000_000 + medication.id)
+                                    medicationOccurrences.filter { it.medicationId == medication.id }.forEach { occurrence -> alarmScheduler.cancelReminder(2_000_000 + occurrence.id) }
+                                    lifeItemRepository.removeMedication(medication.id)
+                                    snackbar.showSnackbar("Medication deleted")
+                                }
+                            }
+                            medicationBeingViewedId = null
+                        },
                         padding = padding,
                     )
                 lifeItemBeingViewed != null ->
                     TimelineItemDetailScreen(
                         timelineItem = lifeItemBeingViewed!!,
                         onBack = { lifeItemBeingViewed = null },
+                        onDone = {
+                            lifeItemBeingViewed?.let(completeTimelineItem)
+                            lifeItemBeingViewed = null
+                        },
+                        onDelete = {
+                            lifeItemBeingViewed?.let { item ->
+                                scope.launch {
+                                    when (item.type) {
+                                        TimelineItemType.REMINDER -> {
+                                            alarmScheduler.cancelReminder(1_000_000 + item.sourceId)
+                                            lifeItemRepository.removeReminder(item.sourceId)
+                                        }
+                                        TimelineItemType.ROUTINE -> lifeItemRepository.removeRoutine(item.sourceId)
+                                        TimelineItemType.EVENT -> lifeItemRepository.removeEvent(item.sourceId)
+                                        TimelineItemType.ALARM -> {
+                                            alarmScheduler.cancel(3_000_000 + item.sourceId)
+                                            lifeItemRepository.removeAlarm(item.sourceId)
+                                        }
+                                        TimelineItemType.TIMER -> {
+                                            alarmScheduler.cancelTimer(4_000_000 + item.sourceId)
+                                            lifeItemRepository.removeTimer(item.sourceId)
+                                        }
+                                        TimelineItemType.ITINERARY -> lifeItemRepository.removeItineraryEntry(item.id)
+                                        TimelineItemType.TASK, TimelineItemType.MEDICATION -> Unit
+                                    }
+                                    snackbar.showSnackbar("${item.type.displayName()} deleted")
+                                }
+                            }
+                            lifeItemBeingViewed = null
+                        },
                         padding = padding,
                     )
                 taskBeingViewed != null ->
@@ -481,6 +627,7 @@ fun LifeMinderApp(
                         plan = dailyPlan,
                         projects = projects,
                         onEdit = { showQuickAdd = false; taskBeingViewed = it },
+                        onCompleteTask = completeTask,
                         onSavePlan = { scope.launch { planningRepository.save(it) } },
                         onRemove = { taskId -> scope.launch { planningRepository.remove(todayKey, taskId) } },
                         onOpenTimeline = { item ->
@@ -508,6 +655,7 @@ fun LifeMinderApp(
                                 }
                             }
                         },
+                        onDoneTimeline = completeTimelineItem,
                         padding = padding,
                     )
                 destination == AppDestination.LIFE_ITEMS ->
@@ -1157,8 +1305,11 @@ private fun MedicationDetailScreen(
     occurrences: List<MedicationOccurrenceEntity>,
     onBack: () -> Unit,
     onEdit: () -> Unit,
+    onDone: () -> Unit,
+    onDelete: () -> Unit,
     padding: PaddingValues,
 ) {
+    var confirmDelete by remember(medication.id) { mutableStateOf(false) }
     val nextOccurrence = occurrences.filter { it.status in setOf("DUE", "SNOOZED") }.minByOrNull { it.snoozedUntil ?: it.scheduledAt }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
@@ -1182,15 +1333,21 @@ private fun MedicationDetailScreen(
         medication.quantityRemaining?.let { item { Text("Quantity remaining: $it") } }
         if (medication.prescribingNotes.isNotBlank()) item { Text("Prescribing notes: ${medication.prescribingNotes}") }
         if (medication.generalNotes.isNotBlank()) item { Text("Notes: ${medication.generalNotes}") }
+        if (occurrences.any { it.status in setOf("DUE", "SNOOZED") }) item { Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") } }
+        item { BottomLeftDeleteButton { confirmDelete = true } }
     }
+    DeleteItemDialog(medication.name, confirmDelete, { confirmDelete = false }, onDelete)
 }
 
 @Composable
 private fun TimelineItemDetailScreen(
     timelineItem: TimelineItem,
     onBack: () -> Unit,
+    onDone: () -> Unit,
+    onDelete: () -> Unit,
     padding: PaddingValues,
 ) {
+    var confirmDelete by remember(timelineItem.type, timelineItem.id) { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1202,7 +1359,42 @@ private fun TimelineItemDetailScreen(
         timelineItem.startAt?.let { start -> item { Text("Scheduled: ${formatAlarmTime(start)}") } }
         timelineItem.endAt?.let { end -> item { Text("Ends: ${formatAlarmTime(end)}") } }
         if (timelineItem.subtitle.isNotBlank()) item { Text(timelineItem.subtitle) }
+        if (timelineItem.actionable && timelineItem.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN", "SNOOZED")) item { Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") } }
+        item { BottomLeftDeleteButton { confirmDelete = true } }
     }
+    DeleteItemDialog(timelineItem.title, confirmDelete, { confirmDelete = false }, onDelete)
+}
+
+@Composable
+private fun BottomLeftDeleteButton(onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = onClick,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+        ) { Text("Delete") }
+    }
+}
+
+@Composable
+private fun DeleteItemDialog(
+    itemName: String,
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    if (!visible) return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete item?") },
+        text = { Text("Delete \"$itemName\"? This cannot be undone.") },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+            ) { Text("Delete") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 private fun formatMedicationTimes(value: String): String =
@@ -1236,13 +1428,8 @@ private fun TaskDetailScreen(
                 Button(onClick = onEdit) { Text("Edit task") }
             }
         }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
-                    Button(onClick = onComplete, modifier = Modifier.weight(1f)) { Text("Complete") }
-                }
-                OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.weight(1f)) { Text("Delete") }
-            }
+        if (task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
+            item { Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) { Text("Complete") } }
         }
         item { Text(task.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item { Text(task.description.ifBlank { "No description or notes." }) }
@@ -1263,6 +1450,7 @@ private fun TaskDetailScreen(
         if (dependencies.isNotEmpty()) item { Text("Depends on: ${dependencies.joinToString()}") }
         if (task.isBlocked) item { Text("Blocked by: ${task.blockingTaskTitles.joinToString()}", color = MaterialTheme.colorScheme.error) }
         task.completedAt?.let { item { Text("Completed: ${formatAlarmTime(it)}") } }
+        item { BottomLeftDeleteButton { confirmDelete = true } }
     }
     if (confirmDelete) {
         AlertDialog(
@@ -2512,9 +2700,11 @@ private fun UnifiedTodayScreen(
     plan: List<DailyPlanItem>,
     projects: List<Project>,
     onEdit: (Task) -> Unit,
+    onCompleteTask: (Task) -> Unit,
     onSavePlan: (DailyPlanItem) -> Unit,
     onRemove: (Long) -> Unit,
     onOpenTimeline: (TimelineItem) -> Unit,
+    onDoneTimeline: (TimelineItem) -> Unit,
     padding: PaddingValues,
 ) {
     var hideFinished by remember { mutableStateOf(false) }
@@ -2558,6 +2748,7 @@ private fun UnifiedTodayScreen(
                         Text("${row.type.name.lowercase().replace('_', ' ')} · ${row.status.lowercase()}${row.subtitle.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}${row.timezone?.let { " · $it" }.orEmpty()}")
                         if (row.actionable && row.startAt != null && row.startAt < todayStart && row.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")) {
                             Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            Button(onClick = { onDoneTimeline(row) }) { Text("Done") }
                         }
                     }
                 }
@@ -2578,6 +2769,7 @@ private fun UnifiedTodayScreen(
                         Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onEdit(task) })
                         if (task.dueAt != null && task.dueAt < now && task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
                             Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            Button(onClick = { onCompleteTask(task) }) { Text("Done") }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             (1..0).forEach { rank ->
@@ -2937,7 +3129,7 @@ private fun LifeItemsScreen(
                 repository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = dayStart + (routine.preferredTimeMinutes ?: 9 * 60) * 60_000L, createdAt = generatedAt, updatedAt = generatedAt))
             }
         }
-        medications.filter { it.active && !it.asNeeded && it.scheduleType != "ONCE" && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
+        medications.filter { it.active && !it.asNeeded && (it.scheduleType != "ONCE" || it.recurrenceRule != null) && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
             val minutes =
                 medication.timesOfDay
                     .split(',')

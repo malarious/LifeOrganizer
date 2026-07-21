@@ -307,6 +307,9 @@ interface LifeItemDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putReminder(value: ReminderEntity): Long
 
+    @Query("DELETE FROM reminders WHERE id = :id")
+    suspend fun deleteReminder(id: Long)
+
     @Query("UPDATE reminders SET status = :status, completedAt = :at, updatedAt = :at WHERE id = :id")
     suspend fun setReminderStatus(
         id: Long,
@@ -326,6 +329,9 @@ interface LifeItemDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putRoutine(value: RoutineEntity): Long
+
+    @Query("DELETE FROM routines WHERE id = :id")
+    suspend fun deleteRoutine(id: Long)
 
     @Query("UPDATE routines SET active = :active, updatedAt = :now WHERE id = :id")
     suspend fun setRoutineActive(
@@ -349,6 +355,9 @@ interface LifeItemDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putMedication(value: MedicationEntity): Long
 
+    @Query("DELETE FROM medications WHERE id = :id")
+    suspend fun deleteMedication(id: Long)
+
     @Query("UPDATE medications SET active = :active, updatedAt = :now WHERE id = :id")
     suspend fun setMedicationActive(
         id: Long,
@@ -367,6 +376,9 @@ interface LifeItemDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putEvent(value: LifeEventEntity): Long
+
+    @Query("DELETE FROM life_events WHERE id = :id")
+    suspend fun deleteEvent(id: Long)
 
     @Query("SELECT * FROM standalone_alarms ORDER BY scheduledAt")
     fun observeStandaloneAlarms(): Flow<List<StandaloneAlarmEntity>>
@@ -434,6 +446,9 @@ interface LifeItemDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putItineraryEntry(value: ItineraryEntryEntity): Long
+
+    @Query("DELETE FROM itinerary_entries WHERE id = :id")
+    suspend fun deleteItineraryEntry(id: Long)
 
     @Query("UPDATE itinerary_entries SET startAt = :startAt, endAt = :endAt, updatedAt = :now WHERE id = :id")
     suspend fun moveItineraryEntry(

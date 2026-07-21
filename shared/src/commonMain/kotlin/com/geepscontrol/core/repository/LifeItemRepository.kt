@@ -75,15 +75,23 @@ class LifeItemRepository(
 
     suspend fun save(value: ReminderEntity) = dao.putReminder(value)
 
+    suspend fun removeReminder(id: Long) = dao.deleteReminder(id)
+
     suspend fun save(value: RoutineEntity) = dao.putRoutine(value)
+
+    suspend fun removeRoutine(id: Long) = dao.deleteRoutine(id)
 
     suspend fun save(value: RoutineOccurrenceEntity) = dao.putRoutineOccurrence(value)
 
     suspend fun save(value: MedicationEntity) = dao.putMedication(value)
 
+    suspend fun removeMedication(id: Long) = dao.deleteMedication(id)
+
     suspend fun save(value: MedicationOccurrenceEntity) = dao.putMedicationOccurrence(value)
 
     suspend fun save(value: LifeEventEntity) = dao.putEvent(value)
+
+    suspend fun removeEvent(id: Long) = dao.deleteEvent(id)
 
     suspend fun save(value: StandaloneAlarmEntity) = dao.putStandaloneAlarm(value)
 
@@ -110,6 +118,8 @@ class LifeItemRepository(
     suspend fun save(value: TripEntity) = dao.putTrip(value)
 
     suspend fun save(value: ItineraryEntryEntity) = dao.putItineraryEntry(value)
+
+    suspend fun removeItineraryEntry(id: Long) = dao.deleteItineraryEntry(id)
 
     suspend fun save(value: TransportationDetailsEntity) = dao.putTransportationDetails(value)
 
