@@ -139,6 +139,12 @@ import kotlinx.coroutines.launch
 
 // Temporary recording-safe label: keep the real account internal for calendar access.
 private const val CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER = "PlaceHolder@gmail.com"
+private val CALENDAR_NAME_RECORDING_SUFFIXES = listOf(".edu", ".com", ".net")
+
+private fun isCalendarNameSafeForRecording(name: String): Boolean {
+    val normalized = name.trim().lowercase()
+    return CALENDAR_NAME_RECORDING_SUFFIXES.none(normalized::endsWith)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -194,8 +200,12 @@ fun LifeMinderApp(
     val now = currentTimeMillis()
     var selectedCalendarIds by remember { mutableStateOf(appSettings.selectedCalendarIds) }
     var calendarRefreshRequest by remember { mutableIntStateOf(0) }
-    val deviceCalendars = remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest) { platformActions.deviceCalendars() }
-    val deviceCalendarEvents = remember(destination, selectedCalendarIds, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
+    val deviceCalendars =
+        remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest) {
+            platformActions.deviceCalendars().filter { isCalendarNameSafeForRecording(it.name) }
+        }
+    val recordingSafeCalendarIds = selectedCalendarIds intersect deviceCalendars.mapTo(mutableSetOf()) { it.id }
+    val deviceCalendarEvents = remember(destination, recordingSafeCalendarIds, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, recordingSafeCalendarIds) }
     val deviceCalendarNames = deviceCalendars.associate { it.id to it.name }
     val deviceCalendarTimeline =
         deviceCalendarEvents.map { event ->
