@@ -2742,14 +2742,15 @@ private fun UnifiedTodayScreen(
         ) {
             if (rows.isNotEmpty()) item { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             items(rows.distinctBy { it.type to it.id }, key = { "timeline-$title-${it.type}-${it.id}" }) { row ->
+                val isOverdue = row.actionable && row.startAt != null && row.startAt < todayStart && row.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")
                 Card(Modifier.fillMaxWidth().clickable { onOpenTimeline(row) }) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(row.title, fontWeight = FontWeight.SemiBold)
-                        Text("${row.type.name.lowercase().replace('_', ' ')} · ${row.status.lowercase()}${row.subtitle.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}${row.timezone?.let { " · $it" }.orEmpty()}")
-                        if (row.actionable && row.startAt != null && row.startAt < todayStart && row.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")) {
-                            Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                            Button(onClick = { onDoneTimeline(row) }) { Text("Done") }
+                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(row.title, fontWeight = FontWeight.SemiBold)
+                            Text("${row.type.name.lowercase().replace('_', ' ')} · ${row.status.lowercase()}${row.subtitle.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}${row.timezone?.let { " · $it" }.orEmpty()}")
+                            if (isOverdue) Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                         }
+                        if (isOverdue) Button(onClick = { onDoneTimeline(row) }) { Text("Done") }
                     }
                 }
             }
@@ -2766,10 +2767,13 @@ private fun UnifiedTodayScreen(
             tasks.firstOrNull { it.id == item.taskId }?.let { task ->
                 Card(Modifier.fillMaxWidth().clickable { onEdit(task) }) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onEdit(task) })
-                        if (task.dueAt != null && task.dueAt < now && task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
-                            Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                            Button(onClick = { onCompleteTask(task) }) { Text("Done") }
+                        val isOverdue = task.dueAt != null && task.dueAt < now && task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onEdit(task) })
+                                if (isOverdue) Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            }
+                            if (isOverdue) Button(onClick = { onCompleteTask(task) }) { Text("Done") }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             (1..0).forEach { rank ->
