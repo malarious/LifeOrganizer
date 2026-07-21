@@ -91,6 +91,7 @@ import com.geepscontrol.core.domain.AnalyticsService
 import com.geepscontrol.core.domain.AppDestination
 import com.geepscontrol.core.domain.DailyPlanItem
 import com.geepscontrol.core.domain.DeviceCalendar
+import com.geepscontrol.core.domain.DeviceCalendarEvent
 import com.geepscontrol.core.domain.EnergyRequirement
 import com.geepscontrol.core.domain.NotificationCategory
 import com.geepscontrol.core.domain.PlatformActions
@@ -166,6 +167,7 @@ fun LifeMinderApp(
     var showOnboarding by remember { mutableStateOf(!appSettings.onboardingCompleted) }
     var showTopMenu by remember { mutableStateOf(false) }
     var showQuickAdd by remember { mutableStateOf(false) }
+    var selectedCalendarEvent by remember { mutableStateOf<DeviceCalendarEvent?>(null) }
     var lifeItemQuickType by remember { mutableStateOf("Reminder") }
     var themeMode by remember { mutableStateOf(appSettings.themeMode) }
     val projects by projectRepository.observeProjects().collectAsState(emptyList())
@@ -176,6 +178,22 @@ fun LifeMinderApp(
     var selectedCalendarIds by remember { mutableStateOf(appSettings.selectedCalendarIds) }
     val deviceCalendars = remember(destination, selectedCalendarIds) { platformActions.deviceCalendars() }
     val deviceCalendarEvents = remember(destination, selectedCalendarIds, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
+    val deviceCalendarNames = deviceCalendars.associate { it.id to it.name }
+    val deviceCalendarTimeline =
+        deviceCalendarEvents.map { event ->
+            TimelineItem(
+                event.id,
+                TimelineItemType.EVENT,
+                event.title,
+                event.startAt,
+                event.endAt,
+                event.allDay,
+                actionable = false,
+                status = "CALENDAR",
+                subtitle = listOfNotNull(deviceCalendarNames[event.calendarId]?.let { "From $it" }, event.location.takeIf { it.isNotBlank() }).joinToString(" · "),
+                sourceId = event.calendarId,
+            )
+        }
     val todayKey = dayKey(now)
     val dailyPlan by planningRepository.observeDay(todayKey).collectAsState(emptyList())
     val activeTimer by timerRepository.observeActive().collectAsState(null)
@@ -390,7 +408,7 @@ fun LifeMinderApp(
                     UnifiedTodayScreen(
                         timeline = timeline.mapNotNull { item ->
                             if (item.type != TimelineItemType.ALARM) item else lifeAlarms.firstOrNull { it.id == item.id }?.takeIf { it.enabled }?.let { item.copy(startAt = it.scheduledAt, status = "SCHEDULED") }
-                        } + deviceCalendarEvents.map { TimelineItem(it.id, TimelineItemType.EVENT, it.title, it.startAt, it.endAt, it.allDay, actionable = false, status = "CALENDAR", subtitle = it.location) },
+                        } + deviceCalendarTimeline,
                         tasks = tasks,
                         plan = dailyPlan,
                         projects = projects,
@@ -402,6 +420,13 @@ fun LifeMinderApp(
                                 TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { taskBeingEdited = it }
                                 TimelineItemType.ITINERARY -> { selectedTripId = item.sourceId; destination = AppDestination.TRIPS }
                                 TimelineItemType.ALARM, TimelineItemType.TIMER -> destination = AppDestination.TIMERS
+                                TimelineItemType.EVENT -> {
+                                    if (item.status == "CALENDAR") {
+                                        selectedCalendarEvent = deviceCalendarEvents.firstOrNull { it.id == item.id && it.calendarId == item.sourceId }
+                                    } else {
+                                        destination = AppDestination.LIFE_ITEMS
+                                    }
+                                }
                                 else -> destination = AppDestination.LIFE_ITEMS
                             }
                         },
@@ -410,7 +435,7 @@ fun LifeMinderApp(
                 destination == AppDestination.LIFE_ITEMS ->
                     LifeItemsScreen(reminders, routines, routineOccurrences, medications, medicationOccurrences, events, lifeAlarms, standaloneTimers, timerPresets, lifeItemQuickType, lifeItemRepository, alarmScheduler, padding)
                 destination == AppDestination.UPCOMING ->
-                    UpcomingScreen(timeline + deviceCalendarEvents.map { TimelineItem(it.id, TimelineItemType.EVENT, it.title, it.startAt, it.endAt, it.allDay, actionable = false, status = "CALENDAR", subtitle = it.location) }, now, padding)
+                    UpcomingScreen(timeline + deviceCalendarTimeline, now, padding)
                 destination == AppDestination.TRIPS ->
                     TripsScreen(
                         trips,
@@ -562,6 +587,27 @@ fun LifeMinderApp(
                 else -> DestinationPlaceholder(destination, { destination = it }, padding)
             }
         }
+    }
+
+    selectedCalendarEvent?.let { event ->
+        AlertDialog(
+            onDismissRequest = { selectedCalendarEvent = null },
+            title = { Text(event.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("From ${deviceCalendarNames[event.calendarId] ?: "device calendar"}", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (event.allDay) {
+                            "${formatDate(event.startAt)} · All day"
+                        } else {
+                            "${formatAlarmTime(event.startAt)} – ${formatAlarmTime(event.endAt)}"
+                        },
+                    )
+                    if (event.location.isNotBlank()) Text(event.location)
+                }
+            },
+            confirmButton = { Button(onClick = { selectedCalendarEvent = null }) { Text("Done") } },
+        )
     }
 
     taskBeingEdited?.let { original ->
