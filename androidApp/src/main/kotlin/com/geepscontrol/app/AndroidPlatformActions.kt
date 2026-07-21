@@ -84,7 +84,7 @@ class AndroidPlatformActions(
             .putExtra(AlarmReceiver.EXTRA_IS_TIMER, true)
             .putExtra(AlarmReceiver.EXTRA_SOUND, true)
             .putExtra(AlarmReceiver.EXTRA_VIBRATION, true)
-            .putExtra(AlarmReceiver.EXTRA_SOUND_ID, "standard_steel")
+            .putExtra(AlarmReceiver.EXTRA_SOUND_ID, "n_dimensions")
             .putExtra(AlarmReceiver.EXTRA_LOOP_SOUND, true)
             .putExtra(AlarmReceiver.EXTRA_VIBRATION_MODE, "STANDARD")
             .putExtra(AlarmReceiver.EXTRA_START_VOLUME, 30)

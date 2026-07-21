@@ -123,6 +123,7 @@ import com.geepscontrol.core.domain.TimelineItemType
 import com.geepscontrol.core.domain.UnifiedTimelineService
 import com.geepscontrol.core.domain.WorkSession
 import com.geepscontrol.core.domain.currentTimeMillis
+import com.geepscontrol.core.domain.currentBundledAlarmSoundId
 import com.geepscontrol.core.domain.dayKey
 import com.geepscontrol.core.repository.ContextRepository
 import com.geepscontrol.core.repository.LifeItemRepository
@@ -2293,7 +2294,7 @@ private fun TimerScreen(
     var alarmWeekdays by remember { mutableStateOf(setOf<Int>()) }
     var alarmProfileId by remember { mutableStateOf<Long?>(null) }
     var alarmSound by remember { mutableStateOf(true) }
-    var alarmSoundId by remember { mutableStateOf("standard_steel") }
+    var alarmSoundId by remember { mutableStateOf("n_dimensions") }
     var alarmLoopSound by remember { mutableStateOf(true) }
     var alarmVibrationMode by remember { mutableStateOf("STANDARD") }
     var alarmVibrationDelay by remember { mutableStateOf(0) }
@@ -2307,7 +2308,7 @@ private fun TimerScreen(
     fun applyProfile(profile: AlarmProfileEntity) {
         alarmProfileId = profile.id
         alarmSound = profile.soundEnabled
-        alarmSoundId = profile.soundId ?: "standard_steel"
+        alarmSoundId = currentBundledAlarmSoundId(profile.soundId)
         alarmLoopSound = profile.loopSound
         alarmVibrationMode = if (profile.vibrationEnabled) profile.vibrationMode else "OFF"
         alarmVibrationDelay = profile.vibrationStartDelaySeconds
@@ -2333,7 +2334,7 @@ private fun TimerScreen(
         if (profile != null) applyProfile(profile)
         alarmProfileId = alarm?.profileId ?: profile?.id
         alarmSound = alarm?.sound ?: alarmSound
-        alarmSoundId = alarm?.soundId ?: alarmSoundId
+        alarmSoundId = alarm?.soundId?.let(::currentBundledAlarmSoundId) ?: alarmSoundId
         alarmLoopSound = alarm?.loopSound ?: alarmLoopSound
         alarmVibrationMode = alarm?.vibrationMode ?: alarmVibrationMode
         alarmVibrationDelay = alarm?.vibrationStartDelaySeconds ?: alarmVibrationDelay
@@ -2725,7 +2726,7 @@ private fun TimerScreen(
                         }
                     }
                     item {
-                        OutlinedButton(onClick = { val now = currentTimeMillis(); profileBeingEdited = AlarmProfileEntity(name = "Custom", soundId = "standard_steel", createdAt = now, updatedAt = now) }, modifier = Modifier.fillMaxWidth()) { Text("New profile") }
+                        OutlinedButton(onClick = { val now = currentTimeMillis(); profileBeingEdited = AlarmProfileEntity(name = "Custom", soundId = "n_dimensions", createdAt = now, updatedAt = now) }, modifier = Modifier.fillMaxWidth()) { Text("New profile") }
                     }
                 }
             },

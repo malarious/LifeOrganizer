@@ -9,16 +9,29 @@ enum class AlarmDifficulty { EASY, NORMAL, HARD }
 data class AlarmSoundOption(val id: String, val name: String, val category: String)
 
 val bundledAlarmSounds = listOf(
-    AlarmSoundOption("gentle_pizzicato", "Gentle Pizzicato", "Gentle"),
-    AlarmSoundOption("bright_pizzicato", "Bright Pizzicato", "Playful"),
-    AlarmSoundOption("standard_steel", "Standard Steel", "Dramatic"),
-    AlarmSoundOption("calm_steel", "Calm Steel", "Gentle"),
-    AlarmSoundOption("retro_rise", "Retro Rise", "Retro"),
-    AlarmSoundOption("retro_alert", "Retro Alert", "Energetic"),
-    AlarmSoundOption("sax_wakeup", "Sax Wake-Up", "Energetic"),
-    AlarmSoundOption("short_hit", "Short Hit", "Short alert"),
-    AlarmSoundOption("timer_hit", "Timer Complete", "Timer completion"),
+    AlarmSoundOption("battle_winter", "Battle in the Winter", "Cinematic"),
+    AlarmSoundOption("happy", "Happy", "Upbeat"),
+    AlarmSoundOption("high_tech_lab", "High Tech Lab", "Ambient"),
+    AlarmSoundOption("epic_boss", "Epic Boss Battle", "Energetic"),
+    AlarmSoundOption("n_dimensions", "n-Dimensions", "Electronic"),
 )
+
+private val legacyAlarmSoundIds = mapOf(
+    "gentle_pizzicato" to "high_tech_lab",
+    "bright_pizzicato" to "happy",
+    "standard_steel" to "n_dimensions",
+    "calm_steel" to "high_tech_lab",
+    "retro_rise" to "battle_winter",
+    "retro_alert" to "epic_boss",
+    "sax_wakeup" to "battle_winter",
+    "short_hit" to "happy",
+    "timer_hit" to "happy",
+)
+
+fun currentBundledAlarmSoundId(id: String?): String {
+    val currentId = legacyAlarmSoundIds[id] ?: id
+    return currentId?.takeIf { saved -> bundledAlarmSounds.any { it.id == saved } } ?: "n_dimensions"
+}
 
 object AlarmExperience {
     fun challengeGraceSeconds(difficulty: AlarmDifficulty) = when (difficulty) { AlarmDifficulty.EASY -> 5; AlarmDifficulty.NORMAL -> 7; AlarmDifficulty.HARD -> 10 }

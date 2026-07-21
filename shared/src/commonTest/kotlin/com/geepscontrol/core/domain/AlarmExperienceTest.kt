@@ -7,6 +7,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AlarmExperienceTest {
+    @Test fun `music catalog contains only the five replacement tracks`() {
+        assertEquals(setOf("battle_winter", "happy", "high_tech_lab", "epic_boss", "n_dimensions"), bundledAlarmSounds.map { it.id }.toSet())
+        assertEquals("n_dimensions", currentBundledAlarmSoundId("standard_steel"))
+        assertEquals("happy", currentBundledAlarmSoundId("timer_hit"))
+        assertEquals("n_dimensions", currentBundledAlarmSoundId("missing"))
+    }
+
     @Test fun `challenge grace grows with difficulty`() {
         assertEquals(5, AlarmExperience.challengeGraceSeconds(AlarmDifficulty.EASY))
         assertEquals(10, AlarmExperience.challengeGraceSeconds(AlarmDifficulty.HARD))

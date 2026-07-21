@@ -7,7 +7,7 @@
 - Timers has internal Timers/Alarms segmentation, one-tap 5/10/15/30/45/60-minute launch, optional names, hours/minutes/seconds custom entry, favorite presets, preset edit/pin/order/duplicate/delete, and recent restart/save actions.
 - Schema 11 adds live alarm profiles, alarm snooze counts/profile references, and timer-preset sound/favorite/order fields without changing the application ID or database name.
 - Built-in profiles are Gentle, Standard, Heavy Sleeper, Silent Vibration, and Reminder. Hidden compatibility profiles preserve sound-only and fully silent legacy alarms. Built-ins are copied before editing.
-- 85 original Kenney OGG jingles are packaged under `assets/audio`; nine curated choices have friendly metadata. Large repository-level MP3/FLAC files are not packaged because their provenance is not recorded.
+- Five MP3, WAV, and FLAC music tracks are packaged under `assets/audio/music` and exposed through friendly names. The former Kenney jingle collection is no longer packaged or selectable.
 - Alarm playback uses one `MediaPlayer`, elapsed-time volume interpolation, optional looping, simultaneous or delayed vibration, snooze limits, and an in-memory queue to prevent overlapping alarm audio.
 - Standard, Hold, Number, and Trace dismissal are available. Challenge profiles always expose a documented five-second emergency hold; when an accessibility service is active, a standard accessible acknowledgment is also shown.
 - Export format 4 includes alarm profiles and validates alarm/profile relationships. Versions 1–3 remain accepted.

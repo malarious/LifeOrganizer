@@ -20,6 +20,10 @@ android {
 
     buildFeatures { compose = true }
 
+    androidResources {
+        noCompress += listOf("mp3", "wav", "flac")
+    }
+
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false

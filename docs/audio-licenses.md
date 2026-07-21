@@ -1,14 +1,11 @@
 # Audio assets
 
-## Kenney Music Jingles
+## Bundled alarm music
 
-- Creator: Kenney
-- Source: Kenney Music Jingles asset pack supplied by the project owner
-- License: CC0 1.0 Universal / public domain dedication
-- Date added to Android assets: 2026-07-18
-- Production location: `androidApp/src/main/assets/audio`
-- Modifications: none; original filenames and folder names are preserved
+- Source: files supplied by the project owner in the repository-level `Audio` directory
+- Date added to Android assets: 2026-07-21
+- Production location: `androidApp/src/main/assets/audio/music`
+- Packaged tracks: `Battle in the winter.mp3`, `happy.mp3`, `high tech lab.flac`, `Juhani Junkala - Epic Boss Battle [Seamlessly Looping].wav`, and `n-Dimensions.mp3`
+- Modifications: filenames were normalized for Android packaging; audio content was not modified
 
-The packaged collection contains the original `jingles_NES00–16.ogg`, `jingles_HIT00–16.ogg`, `jingles_PIZZI00–16.ogg`, `jingles_SAX00–16.ogg`, and `jingles_STEEL00–16.ogg` files. The app exposes a curated subset through friendly metadata in `androidApp/src/main/assets/alarm-sounds.json`; it does not show raw filenames to users.
-
-The large MP3/FLAC files at the repository-level `Audio` directory are not packaged. Their provenance and license have not been established in this repository.
+The former Kenney Music Jingles assets are no longer packaged or used by the app. Licensing details for the five replacement tracks are not documented in this repository and must be confirmed before public distribution.

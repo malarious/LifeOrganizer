@@ -239,7 +239,7 @@ class AlarmReceiver : BroadcastReceiver() {
         isTimer: Boolean = false,
         sound: Boolean = true,
         vibration: Boolean = true,
-        soundId: String? = if (isTimer) "timer_hit" else null,
+        soundId: String? = if (isTimer) "happy" else null,
         profileName: String? = null,
         loopSound: Boolean = !isTimer,
         vibrationMode: String = "STANDARD",
