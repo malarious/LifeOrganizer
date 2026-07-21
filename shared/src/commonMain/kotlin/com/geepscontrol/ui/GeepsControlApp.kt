@@ -151,6 +151,7 @@ fun LifeMinderApp(
 ) {
     var destination by remember { mutableStateOf(AppDestination.TODAY) }
     var taskBeingEdited by remember { mutableStateOf<Task?>(null) }
+    var taskBeingViewed by remember { mutableStateOf<Task?>(null) }
     var projectBeingEdited by remember { mutableStateOf<Project?>(null) }
     var selectedProject by remember { mutableStateOf<Project?>(null) }
     var selectedTripId by remember { mutableStateOf<Long?>(null) }
@@ -225,6 +226,9 @@ fun LifeMinderApp(
     val weeklyDeferrals by planningRepository.observeDeferralCount(reviewWeekStart, reviewDayStart + DAY_MILLIS).collectAsState(0)
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(todayKey) {
+        lifeItemRepository.removeHistoryBefore(todayKey * DAY_MILLIS)
+    }
     LaunchedEffect(standaloneTimers) {
         standaloneTimers.filter { it.state == "COMPLETED" }.forEach { lifeItemRepository.removeTimer(it.id) }
     }
@@ -412,12 +416,12 @@ fun LifeMinderApp(
                         tasks = tasks,
                         plan = dailyPlan,
                         projects = projects,
-                        onEdit = { taskBeingEdited = it },
+                        onEdit = { taskBeingViewed = it },
                         onSavePlan = { scope.launch { planningRepository.save(it) } },
                         onRemove = { taskId -> scope.launch { planningRepository.remove(todayKey, taskId) } },
                         onOpenTimeline = { item ->
                             when (item.type) {
-                                TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { taskBeingEdited = it }
+                                TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { taskBeingViewed = it }
                                 TimelineItemType.ITINERARY -> { selectedTripId = item.sourceId; destination = AppDestination.TRIPS }
                                 TimelineItemType.ALARM, TimelineItemType.TIMER -> destination = AppDestination.TIMERS
                                 TimelineItemType.EVENT -> {
@@ -607,6 +611,22 @@ fun LifeMinderApp(
                 }
             },
             confirmButton = { Button(onClick = { selectedCalendarEvent = null }) { Text("Done") } },
+        )
+    }
+
+    taskBeingViewed?.let { task ->
+        TaskDetailDialog(
+            task = task,
+            projectName = projects.firstOrNull { it.id == task.projectId }?.name,
+            tripName = tripTasks.firstOrNull { it.taskId == task.id }?.tripId?.let { tripId -> trips.firstOrNull { it.id == tripId }?.name },
+            contexts = contexts.filter { it.id in task.contextIds }.map { it.name },
+            tags = tags.filter { it.id in task.tagIds }.map { it.name },
+            dependencies = tasks.filter { it.id in task.dependencyIds }.map { it.title },
+            onDismiss = { taskBeingViewed = null },
+            onEdit = {
+                taskBeingViewed = null
+                taskBeingEdited = task
+            },
         )
     }
 
@@ -965,6 +985,47 @@ private fun ProjectDetailScreen(
             }
         }
     }
+}
+
+@Composable
+private fun TaskDetailDialog(
+    task: Task,
+    projectName: String?,
+    tripName: String?,
+    contexts: List<String>,
+    tags: List<String>,
+    dependencies: List<String>,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(task.title) },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { Text(task.description.ifBlank { "No description or notes." }) }
+                item { Text("Status: ${task.status.displayName()}") }
+                item { Text("Priority: ${task.priority.displayName()}") }
+                item { Text("Effort: ${task.energyRequirement.displayName()}") }
+                projectName?.let { item { Text("Project: $it") } }
+                tripName?.let { item { Text("Trip: $it") } }
+                task.estimatedMinutes?.let { item { Text("Estimated duration: $it minutes") } }
+                task.dueAt?.let { item { Text("Due: ${formatAlarmTime(it)}") } }
+                task.reminderAt?.let { item { Text("Reminder: ${formatAlarmTime(it)}") } }
+                task.recurrenceRule?.let { encoded ->
+                    val rule = RecurrenceRule.decode(encoded)
+                    item { Text(rule?.let { "Repeats every ${it.interval} ${it.unit.displayName().lowercase()}${if (it.interval == 1) "" else "s"}, based on ${it.mode.displayName().lowercase()} date" } ?: "Repeats: $encoded") }
+                }
+                if (contexts.isNotEmpty()) item { Text("Contexts: ${contexts.joinToString()}") }
+                if (tags.isNotEmpty()) item { Text("Tags: ${tags.joinToString()}") }
+                if (dependencies.isNotEmpty()) item { Text("Depends on: ${dependencies.joinToString()}") }
+                if (task.isBlocked) item { Text("Blocked by: ${task.blockingTaskTitles.joinToString()}", color = MaterialTheme.colorScheme.error) }
+                task.completedAt?.let { item { Text("Completed: ${formatAlarmTime(it)}") } }
+            }
+        },
+        confirmButton = { Button(onClick = onEdit) { Text("Edit") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @Composable
@@ -1804,6 +1865,8 @@ private fun TimerScreen(
     val inactiveStandalone = standaloneTimers.filter { it.state != "RUNNING" }
     val enabledStandaloneAlarms = standaloneAlarms.filter { it.enabled }
     val disabledStandaloneAlarms = standaloneAlarms.filterNot { it.enabled }
+    val recentHistory = history.filter { it.endedAt >= dayKey(currentTimeMillis()) * DAY_MILLIS }
+    val quickTimerMinutes = setOf(5L, 10L, 15L, 30L, 45L, 60L)
     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(top = 16.dp, bottom = 88.dp)) {
         item { Text("Timers & Alarms", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
@@ -1839,13 +1902,15 @@ private fun TimerScreen(
                 }
             }
         }
-        if (timerTab == "Timers" && history.isNotEmpty()) item {
-            Text("Recent timers", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            history.take(5).forEach { recent ->
+        if (timerTab == "Timers" && recentHistory.isNotEmpty()) item {
+            Text("Ran today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            recentHistory.take(5).forEach { recent ->
+                val durationMinutes = recent.originalDurationMillis / 60_000L
+                val isGenericQuickTimer = durationMinutes in quickTimerMinutes && recent.name == "$durationMinutes-minute timer"
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { onStartStandaloneTimer(recent.name, recent.originalDurationMillis) }) { Text("Start again") }
-                    if (presets.none { it.durationSeconds * 1000L == recent.originalDurationMillis && it.name == recent.name }) TextButton(onClick = { onSavePreset(com.geepscontrol.core.database.TimerPresetEntity(name = recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }, durationSeconds = recent.originalDurationMillis / 1000L, isFavorite = true, manualOrder = presets.size.toLong(), createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())) }) { Text("Save") }
+                    Text("${recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }} · ${recent.result.lowercase()} · ${formatAlarmTime(recent.endedAt)}", modifier = Modifier.weight(1f))
+                    if (!isGenericQuickTimer) TextButton(onClick = { onStartStandaloneTimer(recent.name, recent.originalDurationMillis) }) { Text("Start again") }
+                    if (!isGenericQuickTimer && presets.none { it.durationSeconds * 1000L == recent.originalDurationMillis && it.name == recent.name }) TextButton(onClick = { onSavePreset(com.geepscontrol.core.database.TimerPresetEntity(name = recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }, durationSeconds = recent.originalDurationMillis / 1000L, isFavorite = true, manualOrder = presets.size.toLong(), createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())) }) { Text("Save") }
                 }
             }
         }

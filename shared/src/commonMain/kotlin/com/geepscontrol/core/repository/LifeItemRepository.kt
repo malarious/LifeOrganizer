@@ -105,6 +105,8 @@ class LifeItemRepository(
 
     suspend fun addHistory(value: TimerHistoryEntity) = dao.addTimerHistory(value)
 
+    suspend fun removeHistoryBefore(dayStart: Long) = dao.deleteTimerHistoryBefore(dayStart)
+
     suspend fun save(value: TripEntity) = dao.putTrip(value)
 
     suspend fun save(value: ItineraryEntryEntity) = dao.putItineraryEntry(value)

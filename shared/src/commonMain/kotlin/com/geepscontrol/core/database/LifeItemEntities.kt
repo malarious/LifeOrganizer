@@ -420,6 +420,9 @@ interface LifeItemDao {
 
     @Insert suspend fun addTimerHistory(value: TimerHistoryEntity): Long
 
+    @Query("DELETE FROM timer_history WHERE endedAt < :dayStart")
+    suspend fun deleteTimerHistoryBefore(dayStart: Long)
+
     @Query("SELECT * FROM trips ORDER BY startDate")
     fun observeTrips(): Flow<List<TripEntity>>
 
