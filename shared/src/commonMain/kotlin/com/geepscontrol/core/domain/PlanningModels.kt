@@ -94,7 +94,7 @@ object RecommendationService {
         return Recommendation(task, score, reasons)
     }
 
-    private val eligibleStatuses = setOf(TaskStatus.READY, TaskStatus.SCHEDULED, TaskStatus.IN_PROGRESS)
+    private val eligibleStatuses = setOf(TaskStatus.INBOX, TaskStatus.READY, TaskStatus.SCHEDULED, TaskStatus.IN_PROGRESS)
     const val DAY_MILLIS = 86_400_000L
 }
 

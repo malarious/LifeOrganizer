@@ -3271,10 +3271,13 @@ private fun DoNowScreen(
     var energy by remember { mutableStateOf(EnergyRequirement.MEDIUM) }
     LaunchedEffect(Unit) { minutes = 15; energy = EnergyRequirement.MEDIUM }
     val rankedTasks = RecommendationService.rank(tasks, plan, RecommendationContext(now, availableMinutes = null, energy = energy))
-    val matchingTasks = rankedTasks.filter { recommendation ->
-        (recommendation.task.estimatedMinutes == null || recommendation.task.estimatedMinutes <= minutes) && recommendation.task.energyRequirement.ordinal <= energy.ordinal
-    }
-    val otherTasks = rankedTasks.filterNot { it in matchingTasks }
+    val eligibleMatches =
+        RecommendationService
+            .rank(tasks, plan, RecommendationContext(now, availableMinutes = minutes, energy = energy))
+            .filter { it.task.energyRequirement.ordinal <= energy.ordinal }
+    val matchingTasks = eligibleMatches.filter { it.task.estimatedMinutes != null } + eligibleMatches.filter { it.task.estimatedMinutes == null }
+    val matchingTaskIds = matchingTasks.mapTo(mutableSetOf()) { it.task.id }
+    val otherTasks = rankedTasks.filterNot { it.task.id in matchingTaskIds }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),

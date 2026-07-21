@@ -6,6 +6,19 @@ import kotlin.test.assertTrue
 
 class RecommendationServiceTest {
     @Test
+    fun `inbox tasks and tasks without durations remain eligible`() {
+        val tasks =
+            listOf(
+                Task(id = 1, title = "Unassigned", status = TaskStatus.INBOX, estimatedMinutes = 10),
+                Task(id = 2, title = "Unknown duration", status = TaskStatus.READY),
+            )
+
+        val result = RecommendationService.rank(tasks, emptyList(), RecommendationContext(now = 0, availableMinutes = 15))
+
+        assertEquals(setOf(1L, 2L), result.mapTo(mutableSetOf()) { it.task.id })
+    }
+
+    @Test
     fun `blocked completed and oversized tasks are excluded`() {
         val tasks =
             listOf(
