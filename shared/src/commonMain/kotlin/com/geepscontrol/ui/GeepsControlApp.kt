@@ -154,6 +154,9 @@ fun LifeMinderApp(
     var destination by remember { mutableStateOf(AppDestination.TODAY) }
     var taskBeingEdited by remember { mutableStateOf<Task?>(null) }
     var taskBeingViewed by remember { mutableStateOf<Task?>(null) }
+    var medicationBeingViewedId by remember { mutableStateOf<Long?>(null) }
+    var medicationBeingEdited by remember { mutableStateOf<MedicationEntity?>(null) }
+    var lifeItemBeingViewed by remember { mutableStateOf<TimelineItem?>(null) }
     var projectBeingEdited by remember { mutableStateOf<Project?>(null) }
     var selectedProject by remember { mutableStateOf<Project?>(null) }
     var selectedTripId by remember { mutableStateOf<Long?>(null) }
@@ -210,6 +213,7 @@ fun LifeMinderApp(
     val routineOccurrences by lifeItemRepository.routineOccurrences().collectAsState(emptyList())
     val medications by lifeItemRepository.medications().collectAsState(emptyList())
     val medicationOccurrences by lifeItemRepository.medicationOccurrences().collectAsState(emptyList())
+    val medicationBeingViewed = medications.firstOrNull { it.id == medicationBeingViewedId }
     val events by lifeItemRepository.events().collectAsState(emptyList())
     val lifeAlarms by lifeItemRepository.alarms().collectAsState(emptyList())
     val standaloneTimers by lifeItemRepository.timers().collectAsState(emptyList())
@@ -288,7 +292,7 @@ fun LifeMinderApp(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(taskBeingViewed?.title ?: selectedProject?.name ?: "Life Minder — ${destination.title}", maxLines = 1) },
+                    title = { Text(medicationBeingViewed?.name ?: lifeItemBeingViewed?.title ?: taskBeingViewed?.title ?: selectedProject?.name ?: "Life Minder — ${destination.title}", maxLines = 1) },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = selectedProject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.surface),
                     actions = {
                         Box {
@@ -307,6 +311,8 @@ fun LifeMinderApp(
                                             destination = item
                                             selectedProject = null
                                             taskBeingViewed = null
+                                            medicationBeingViewedId = null
+                                            lifeItemBeingViewed = null
                                             showTopMenu = false
                                         },
                                     )
@@ -318,10 +324,12 @@ fun LifeMinderApp(
             },
             snackbarHost = { SnackbarHost(snackbar) },
             floatingActionButton = {
-                FloatingActionButton(
-                    onClick = { showQuickAdd = true },
-                    modifier = if (destination == AppDestination.TIMERS) Modifier.padding(bottom = 64.dp) else Modifier,
-                ) { Text("+", fontSize = 32.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold) }
+                if (taskBeingViewed == null && medicationBeingViewed == null && lifeItemBeingViewed == null) {
+                    FloatingActionButton(
+                        onClick = { showQuickAdd = true },
+                        modifier = if (destination == AppDestination.TIMERS) Modifier.padding(bottom = 64.dp) else Modifier,
+                    ) { Text("+", fontSize = 32.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold) }
+                }
             },
             bottomBar = {
                 NavigationBar {
@@ -332,6 +340,8 @@ fun LifeMinderApp(
                                 destination = item
                                 selectedProject = null
                                 taskBeingViewed = null
+                                medicationBeingViewedId = null
+                                lifeItemBeingViewed = null
                             },
                             icon = {
                                 Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
@@ -350,6 +360,20 @@ fun LifeMinderApp(
             },
         ) { padding ->
             when {
+                medicationBeingViewed != null ->
+                    MedicationDetailScreen(
+                        medication = medicationBeingViewed,
+                        occurrences = medicationOccurrences.filter { it.medicationId == medicationBeingViewed.id },
+                        onBack = { medicationBeingViewedId = null },
+                        onEdit = { medicationBeingEdited = medicationBeingViewed },
+                        padding = padding,
+                    )
+                lifeItemBeingViewed != null ->
+                    TimelineItemDetailScreen(
+                        timelineItem = lifeItemBeingViewed!!,
+                        onBack = { lifeItemBeingViewed = null },
+                        padding = padding,
+                    )
                 taskBeingViewed != null ->
                     TaskDetailScreen(
                         task = taskBeingViewed!!,
@@ -447,16 +471,26 @@ fun LifeMinderApp(
                         onOpenTimeline = { item ->
                             when (item.type) {
                                 TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { showQuickAdd = false; taskBeingViewed = it }
-                                TimelineItemType.ITINERARY -> { selectedTripId = item.sourceId; destination = AppDestination.TRIPS }
-                                TimelineItemType.ALARM, TimelineItemType.TIMER -> destination = AppDestination.TIMERS
+                                TimelineItemType.MEDICATION -> {
+                                    showQuickAdd = false
+                                    medicationBeingViewedId = item.sourceId
+                                }
+                                TimelineItemType.REMINDER, TimelineItemType.ROUTINE -> {
+                                    showQuickAdd = false
+                                    lifeItemBeingViewed = item
+                                }
                                 TimelineItemType.EVENT -> {
                                     if (item.status == "CALENDAR") {
                                         selectedCalendarEvent = deviceCalendarEvents.firstOrNull { it.id == item.id && it.calendarId == item.sourceId }
                                     } else {
-                                        destination = AppDestination.LIFE_ITEMS
+                                        showQuickAdd = false
+                                        lifeItemBeingViewed = item
                                     }
                                 }
-                                else -> destination = AppDestination.LIFE_ITEMS
+                                else -> {
+                                    showQuickAdd = false
+                                    lifeItemBeingViewed = item
+                                }
                             }
                         },
                         padding = padding,
@@ -638,6 +672,27 @@ fun LifeMinderApp(
                 }
             },
             confirmButton = { Button(onClick = { selectedCalendarEvent = null }) { Text("Done") } },
+        )
+    }
+
+    medicationBeingEdited?.let { original ->
+        MedicationEditorDialog(
+            original = original,
+            onDismiss = { medicationBeingEdited = null },
+            onSave = { updated ->
+                scope.launch {
+                    lifeItemRepository.save(updated)
+                    val minutes = updated.timesOfDay.substringBefore(',').trim().toIntOrNull()
+                    val nextOccurrence = medicationOccurrences.filter { it.medicationId == updated.id && it.status in setOf("DUE", "SNOOZED") }.minByOrNull { it.snoozedUntil ?: it.scheduledAt }
+                    if (minutes != null && nextOccurrence != null) {
+                        val rescheduled = nextOccurrence.copy(scheduledAt = dayKey(nextOccurrence.scheduledAt) * DAY_MILLIS + minutes * 60_000L, snoozedUntil = null, updatedAt = currentTimeMillis())
+                        lifeItemRepository.save(rescheduled)
+                        alarmScheduler.cancelReminder(2_000_000 + nextOccurrence.id)
+                        if (rescheduled.scheduledAt > currentTimeMillis()) alarmScheduler.scheduleReminder(2_000_000 + rescheduled.id, rescheduled.scheduledAt, updated.name, NotificationCategory.TASK_REMINDER)
+                    }
+                }
+                medicationBeingEdited = null
+            },
         )
     }
 
@@ -1001,6 +1056,124 @@ private fun ProjectDetailScreen(
         }
     }
 }
+
+@Composable
+private fun MedicationEditorDialog(
+    original: MedicationEntity,
+    onDismiss: () -> Unit,
+    onSave: (MedicationEntity) -> Unit,
+) {
+    val originalMinutes = original.timesOfDay.substringBefore(',').trim().toIntOrNull() ?: 9 * 60
+    var name by remember(original.id) { mutableStateOf(original.name) }
+    var dosage by remember(original.id) { mutableStateOf(original.dosageText) }
+    var instructions by remember(original.id) { mutableStateOf(original.instructions) }
+    var hour by remember(original.id) { mutableStateOf((originalMinutes / 60).toString()) }
+    var minute by remember(original.id) { mutableStateOf((originalMinutes % 60).toString().padStart(2, '0')) }
+    var repeatDaily by remember(original.id) { mutableStateOf(original.scheduleType != "ONCE") }
+    var active by remember(original.id) { mutableStateOf(original.active) }
+    var quantityRemaining by remember(original.id) { mutableStateOf(original.quantityRemaining?.toString().orEmpty()) }
+    var notes by remember(original.id) { mutableStateOf(original.generalNotes) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit ${original.name}") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { OutlinedTextField(name, { name = it }, label = { Text("Medication name") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
+                item { OutlinedTextField(dosage, { dosage = it }, label = { Text("Dosage") }, modifier = Modifier.fillMaxWidth()) }
+                item { OutlinedTextField(instructions, { instructions = it }, label = { Text("Instructions") }, modifier = Modifier.fillMaxWidth()) }
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(hour, { hour = it.filter(Char::isDigit).take(2) }, label = { Text("Hour (0–23)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                        OutlinedTextField(minute, { minute = it.filter(Char::isDigit).take(2) }, label = { Text("Minute") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    }
+                }
+                item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(repeatDaily, { repeatDaily = it }); Text("Repeat daily", modifier = Modifier.padding(start = 8.dp)) } }
+                item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(active, { active = it }); Text("Active", modifier = Modifier.padding(start = 8.dp)) } }
+                item { OutlinedTextField(quantityRemaining, { quantityRemaining = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Quantity remaining") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)) }
+                item { OutlinedTextField(notes, { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
+            }
+        },
+        confirmButton = {
+            Button(enabled = name.isNotBlank(), onClick = {
+                val timeMinutes = (hour.toIntOrNull() ?: 9).coerceIn(0, 23) * 60 + (minute.toIntOrNull() ?: 0).coerceIn(0, 59)
+                onSave(
+                    original.copy(
+                        name = name.trim(),
+                        dosageText = dosage.trim(),
+                        instructions = instructions.trim(),
+                        timesOfDay = timeMinutes.toString(),
+                        scheduleType = if (repeatDaily) "DAILY" else "ONCE",
+                        recurrenceRule = if (repeatDaily) "1:DAY:FIXED" else null,
+                        active = active,
+                        quantityRemaining = quantityRemaining.toDoubleOrNull(),
+                        generalNotes = notes.trim(),
+                        updatedAt = currentTimeMillis(),
+                    ),
+                )
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun MedicationDetailScreen(
+    medication: MedicationEntity,
+    occurrences: List<MedicationOccurrenceEntity>,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    padding: PaddingValues,
+) {
+    val nextOccurrence = occurrences.filter { it.status in setOf("DUE", "SNOOZED") }.minByOrNull { it.snoozedUntil ?: it.scheduledAt }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onBack) { Text("Back") }
+                Button(onClick = onEdit) { Text("Edit medication") }
+            }
+        }
+        item { Text(medication.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { Text("Medication · ${if (medication.active) "active" else "paused"}") }
+        if (medication.dosageText.isNotBlank()) item { Text("Dosage: ${medication.dosageText}") }
+        if (medication.instructions.isNotBlank()) item { Text("Instructions: ${medication.instructions}") }
+        item { Text("Schedule: ${if (medication.scheduleType == "ONCE") "Once" else "Daily"} at ${formatMedicationTimes(medication.timesOfDay)}") }
+        item { Text("Starts: ${formatDate(medication.startDate)}") }
+        medication.endDate?.let { item { Text("Ends: ${formatDate(it)}") } }
+        nextOccurrence?.let { item { Text("Next: ${formatAlarmTime(it.snoozedUntil ?: it.scheduledAt)}") } }
+        medication.quantityRemaining?.let { item { Text("Quantity remaining: $it") } }
+        if (medication.prescribingNotes.isNotBlank()) item { Text("Prescribing notes: ${medication.prescribingNotes}") }
+        if (medication.generalNotes.isNotBlank()) item { Text("Notes: ${medication.generalNotes}") }
+    }
+}
+
+@Composable
+private fun TimelineItemDetailScreen(
+    timelineItem: TimelineItem,
+    onBack: () -> Unit,
+    padding: PaddingValues,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item { OutlinedButton(onClick = onBack) { Text("Back") } }
+        item { Text(timelineItem.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { Text("${timelineItem.type.displayName()} · ${timelineItem.status.lowercase()}") }
+        timelineItem.startAt?.let { start -> item { Text("Scheduled: ${formatAlarmTime(start)}") } }
+        timelineItem.endAt?.let { end -> item { Text("Ends: ${formatAlarmTime(end)}") } }
+        if (timelineItem.subtitle.isNotBlank()) item { Text(timelineItem.subtitle) }
+    }
+}
+
+private fun formatMedicationTimes(value: String): String =
+    value.split(',').mapNotNull { it.trim().toIntOrNull() }.joinToString { minutes ->
+        (minutes / 60).toString().padStart(2, '0') + ":" + (minutes % 60).toString().padStart(2, '0')
+    }.ifBlank { "Not set" }
 
 @Composable
 private fun TaskDetailScreen(
