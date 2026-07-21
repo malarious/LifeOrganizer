@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.geepscontrol.core.data.DataFileGateway
 import com.geepscontrol.core.data.DataPortabilityService
 import com.geepscontrol.core.database.ItineraryEntryEntity
@@ -198,6 +200,7 @@ fun LifeMinderApp(
     val todayKey = dayKey(now)
     val dailyPlan by planningRepository.observeDay(todayKey).collectAsState(emptyList())
     val activeTimer by timerRepository.observeActive().collectAsState(null)
+    var stopwatchLaps by remember(activeTimer?.startedAt) { mutableStateOf(emptyList<Long>()) }
     val sessions by timerRepository.observeSessions().collectAsState(emptyList())
     val alarms by timerRepository.observeAlarms().collectAsState(emptyList())
     val reviews by reviewRepository.observeReviews().collectAsState(emptyList())
@@ -285,7 +288,7 @@ fun LifeMinderApp(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(selectedProject?.name ?: "Life Minder — ${destination.title}", maxLines = 1) },
+                    title = { Text(taskBeingViewed?.title ?: selectedProject?.name ?: "Life Minder — ${destination.title}", maxLines = 1) },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = selectedProject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.surface),
                     actions = {
                         Box {
@@ -303,6 +306,7 @@ fun LifeMinderApp(
                                         onClick = {
                                             destination = item
                                             selectedProject = null
+                                            taskBeingViewed = null
                                             showTopMenu = false
                                         },
                                     )
@@ -317,7 +321,7 @@ fun LifeMinderApp(
                 FloatingActionButton(
                     onClick = { showQuickAdd = true },
                     modifier = if (destination == AppDestination.TIMERS) Modifier.padding(bottom = 64.dp) else Modifier,
-                ) { Text("+") }
+                ) { Text("+", fontSize = 32.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold) }
             },
             bottomBar = {
                 NavigationBar {
@@ -327,8 +331,17 @@ fun LifeMinderApp(
                             onClick = {
                                 destination = item
                                 selectedProject = null
+                                taskBeingViewed = null
                             },
-                            icon = { Text(item.symbol) },
+                            icon = {
+                                Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        item.symbol,
+                                        fontSize = when (item) { AppDestination.TIMERS -> 30.sp; AppDestination.DO_NOW -> 24.sp; else -> 22.sp },
+                                        lineHeight = 32.sp,
+                                    )
+                                }
+                            },
                             label = { Text(item.title) },
                             colors = NavigationBarItemDefaults.colors(indicatorColor = selectedProject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.secondaryContainer),
                         )
@@ -337,6 +350,18 @@ fun LifeMinderApp(
             },
         ) { padding ->
             when {
+                taskBeingViewed != null ->
+                    TaskDetailScreen(
+                        task = taskBeingViewed!!,
+                        projectName = projects.firstOrNull { it.id == taskBeingViewed!!.projectId }?.name,
+                        tripName = tripTasks.firstOrNull { it.taskId == taskBeingViewed!!.id }?.tripId?.let { tripId -> trips.firstOrNull { it.id == tripId }?.name },
+                        contexts = contexts.filter { it.id in taskBeingViewed!!.contextIds }.map { it.name },
+                        tags = tags.filter { it.id in taskBeingViewed!!.tagIds }.map { it.name },
+                        dependencies = tasks.filter { it.id in taskBeingViewed!!.dependencyIds }.map { it.title },
+                        onBack = { taskBeingViewed = null },
+                        onEdit = { taskBeingEdited = taskBeingViewed },
+                        padding = padding,
+                    )
                 selectedProject != null ->
                     ProjectDetailScreen(
                         project = selectedProject!!,
@@ -416,12 +441,12 @@ fun LifeMinderApp(
                         tasks = tasks,
                         plan = dailyPlan,
                         projects = projects,
-                        onEdit = { taskBeingViewed = it },
+                        onEdit = { showQuickAdd = false; taskBeingViewed = it },
                         onSavePlan = { scope.launch { planningRepository.save(it) } },
                         onRemove = { taskId -> scope.launch { planningRepository.remove(todayKey, taskId) } },
                         onOpenTimeline = { item ->
                             when (item.type) {
-                                TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { taskBeingViewed = it }
+                                TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { showQuickAdd = false; taskBeingViewed = it }
                                 TimelineItemType.ITINERARY -> { selectedTripId = item.sourceId; destination = AppDestination.TRIPS }
                                 TimelineItemType.ALARM, TimelineItemType.TIMER -> destination = AppDestination.TIMERS
                                 TimelineItemType.EVENT -> {
@@ -495,6 +520,8 @@ fun LifeMinderApp(
                         tasks = tasks,
                         timerCreationRequest = timerCreationRequest,
                         alarmCreationRequest = alarmCreationRequest,
+                        stopwatchLaps = stopwatchLaps,
+                        onLap = { stopwatchLaps = stopwatchLaps + it },
                         onSaveTimer = { timer ->
                             scope.launch {
                                 timerRepository.saveActive(timer)
@@ -614,22 +641,6 @@ fun LifeMinderApp(
         )
     }
 
-    taskBeingViewed?.let { task ->
-        TaskDetailDialog(
-            task = task,
-            projectName = projects.firstOrNull { it.id == task.projectId }?.name,
-            tripName = tripTasks.firstOrNull { it.taskId == task.id }?.tripId?.let { tripId -> trips.firstOrNull { it.id == tripId }?.name },
-            contexts = contexts.filter { it.id in task.contextIds }.map { it.name },
-            tags = tags.filter { it.id in task.tagIds }.map { it.name },
-            dependencies = tasks.filter { it.id in task.dependencyIds }.map { it.title },
-            onDismiss = { taskBeingViewed = null },
-            onEdit = {
-                taskBeingViewed = null
-                taskBeingEdited = task
-            },
-        )
-    }
-
     taskBeingEdited?.let { original ->
         TaskEditorDialog(
             original = original,
@@ -658,7 +669,11 @@ fun LifeMinderApp(
                         (due - DAY_MILLIS).takeIf { it > currentTimeMillis() }?.let { alarmScheduler.scheduleReminder(id * 10 + 2, it, "Due tomorrow: ${task.title}", NotificationCategory.DUE_STATUS) }
                         due.takeIf { it > currentTimeMillis() }?.let { alarmScheduler.scheduleReminder(id * 10 + 3, it, "Due now: ${task.title}", NotificationCategory.DUE_STATUS) }
                     }
+                    if (original.id == 0L && task.estimatedMinutes?.let { it in 1..5 } == true) {
+                        snackbar.showSnackbar("Tasks that take 5 minutes or less are usually best done right away.")
+                    }
                 }
+                if (taskBeingViewed?.id == task.id) taskBeingViewed = task
                 taskBeingEdited = null
                 pendingTripTaskId = null
             },
@@ -988,44 +1003,48 @@ private fun ProjectDetailScreen(
 }
 
 @Composable
-private fun TaskDetailDialog(
+private fun TaskDetailScreen(
     task: Task,
     projectName: String?,
     tripName: String?,
     contexts: List<String>,
     tags: List<String>,
     dependencies: List<String>,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
     onEdit: () -> Unit,
+    padding: PaddingValues,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(task.title) },
-        text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { Text(task.description.ifBlank { "No description or notes." }) }
-                item { Text("Status: ${task.status.displayName()}") }
-                item { Text("Priority: ${task.priority.displayName()}") }
-                item { Text("Effort: ${task.energyRequirement.displayName()}") }
-                projectName?.let { item { Text("Project: $it") } }
-                tripName?.let { item { Text("Trip: $it") } }
-                task.estimatedMinutes?.let { item { Text("Estimated duration: $it minutes") } }
-                task.dueAt?.let { item { Text("Due: ${formatAlarmTime(it)}") } }
-                task.reminderAt?.let { item { Text("Reminder: ${formatAlarmTime(it)}") } }
-                task.recurrenceRule?.let { encoded ->
-                    val rule = RecurrenceRule.decode(encoded)
-                    item { Text(rule?.let { "Repeats every ${it.interval} ${it.unit.displayName().lowercase()}${if (it.interval == 1) "" else "s"}, based on ${it.mode.displayName().lowercase()} date" } ?: "Repeats: $encoded") }
-                }
-                if (contexts.isNotEmpty()) item { Text("Contexts: ${contexts.joinToString()}") }
-                if (tags.isNotEmpty()) item { Text("Tags: ${tags.joinToString()}") }
-                if (dependencies.isNotEmpty()) item { Text("Depends on: ${dependencies.joinToString()}") }
-                if (task.isBlocked) item { Text("Blocked by: ${task.blockingTaskTitles.joinToString()}", color = MaterialTheme.colorScheme.error) }
-                task.completedAt?.let { item { Text("Completed: ${formatAlarmTime(it)}") } }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onBack) { Text("Back") }
+                Button(onClick = onEdit) { Text("Edit task") }
             }
-        },
-        confirmButton = { Button(onClick = onEdit) { Text("Edit") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
+        }
+        item { Text(task.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { Text(task.description.ifBlank { "No description or notes." }) }
+        item { Text("Status: ${task.status.displayName()}") }
+        item { Text("Priority: ${task.priority.displayName()}") }
+        item { Text("Effort: ${task.energyRequirement.displayName()}") }
+        projectName?.let { item { Text("Project: $it") } }
+        tripName?.let { item { Text("Trip: $it") } }
+        task.estimatedMinutes?.let { item { Text("Estimated duration: $it minutes") } }
+        task.dueAt?.let { item { Text("Due: ${formatAlarmTime(it)}") } }
+        task.reminderAt?.let { item { Text("Reminder: ${formatAlarmTime(it)}") } }
+        task.recurrenceRule?.let { encoded ->
+            val rule = RecurrenceRule.decode(encoded)
+            item { Text(rule?.let { "Repeats every ${it.interval} ${it.unit.displayName().lowercase()}${if (it.interval == 1) "" else "s"}, based on ${it.mode.displayName().lowercase()} date" } ?: "Repeats: $encoded") }
+        }
+        if (contexts.isNotEmpty()) item { Text("Contexts: ${contexts.joinToString()}") }
+        if (tags.isNotEmpty()) item { Text("Tags: ${tags.joinToString()}") }
+        if (dependencies.isNotEmpty()) item { Text("Depends on: ${dependencies.joinToString()}") }
+        if (task.isBlocked) item { Text("Blocked by: ${task.blockingTaskTitles.joinToString()}", color = MaterialTheme.colorScheme.error) }
+        task.completedAt?.let { item { Text("Completed: ${formatAlarmTime(it)}") } }
+    }
 }
 
 @Composable
@@ -1747,6 +1766,8 @@ private fun TimerScreen(
     tasks: List<Task>,
     timerCreationRequest: Int,
     alarmCreationRequest: Int,
+    stopwatchLaps: List<Long>,
+    onLap: (Long) -> Unit,
     onSaveTimer: (ActiveTimer) -> Unit,
     onStop: (ActiveTimer, Long, String) -> Unit,
     onAddAlarm: (AlarmDefinition) -> Unit,
@@ -1960,8 +1981,19 @@ private fun TimerScreen(
                             Column(horizontalAlignment = Alignment.End) {
                                 if (active.state == TimerState.RUNNING) Button(onClick = { onSaveTimer(TimerEngine.pause(active, currentTimeMillis())) }) { Text("Pause") }
                                 else Button(onClick = { onSaveTimer(TimerEngine.resume(active, currentTimeMillis())) }) { Text("Resume") }
-                                OutlinedButton(onClick = { onSaveTimer(TimerEngine.addTime(active, 5 * 60_000L)) }) { Text("+5 min") }
+                                if (active.mode == TimerMode.STOPWATCH) {
+                                    OutlinedButton(enabled = active.state == TimerState.RUNNING, onClick = { onLap(elapsed) }) { Text("Lap") }
+                                } else {
+                                    OutlinedButton(onClick = { onSaveTimer(TimerEngine.addTime(active, 5 * 60_000L)) }) { Text("+5 min") }
+                                }
                                 Button(onClick = { onStop(active, currentTimeMillis(), "") }) { Text("Finish") }
+                            }
+                        }
+                        if (active.mode == TimerMode.STOPWATCH && stopwatchLaps.isNotEmpty()) {
+                            Text("Laps", fontWeight = FontWeight.SemiBold)
+                            stopwatchLaps.forEachIndexed { index, cumulative ->
+                                val previous = stopwatchLaps.getOrNull(index - 1) ?: 0L
+                                Text("Lap ${index + 1}: ${formatDurationPrecise(cumulative - previous)} · Total ${formatDurationPrecise(cumulative)}")
                             }
                         }
                     }
@@ -3062,9 +3094,9 @@ private fun DoNowScreen(
     onSavePlan: (DailyPlanItem) -> Unit,
     padding: PaddingValues,
 ) {
-    var minutes by remember { mutableStateOf(30) }
+    var minutes by remember { mutableStateOf(15) }
     var energy by remember { mutableStateOf(EnergyRequirement.MEDIUM) }
-    LaunchedEffect(Unit) { minutes = 30; energy = EnergyRequirement.MEDIUM }
+    LaunchedEffect(Unit) { minutes = 15; energy = EnergyRequirement.MEDIUM }
     val rankedTasks = RecommendationService.rank(tasks, plan, RecommendationContext(now, availableMinutes = null, energy = energy))
     val matchingTasks = rankedTasks.filter { recommendation ->
         (recommendation.task.estimatedMinutes == null || recommendation.task.estimatedMinutes <= minutes) && recommendation.task.energyRequirement.ordinal <= energy.ordinal
