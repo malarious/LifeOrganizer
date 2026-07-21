@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -136,6 +137,9 @@ import com.geepscontrol.core.settings.ThemeMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+// Temporary recording-safe label: keep the real account internal for calendar access.
+private const val CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER = "PlaceHolder@gmail.com"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LifeMinderApp(
@@ -152,6 +156,10 @@ fun LifeMinderApp(
     dataPortability: DataPortabilityService,
     dataFiles: DataFileGateway,
     platformActions: PlatformActions,
+    calendarPermissionGranted: Boolean,
+    calendarPermissionRevision: Int,
+    onRequestCalendarPermission: () -> Unit,
+    onOpenCalendarPermissionSettings: () -> Unit,
 ) {
     var destination by remember { mutableStateOf(AppDestination.TODAY) }
     var taskBeingEdited by remember { mutableStateOf<Task?>(null) }
@@ -185,7 +193,8 @@ fun LifeMinderApp(
     val tags by tagRepository.observeTags().collectAsState(emptyList())
     val now = currentTimeMillis()
     var selectedCalendarIds by remember { mutableStateOf(appSettings.selectedCalendarIds) }
-    val deviceCalendars = remember(destination, selectedCalendarIds) { platformActions.deviceCalendars() }
+    var calendarRefreshRequest by remember { mutableIntStateOf(0) }
+    val deviceCalendars = remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest) { platformActions.deviceCalendars() }
     val deviceCalendarEvents = remember(destination, selectedCalendarIds, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
     val deviceCalendarNames = deviceCalendars.associate { it.id to it.name }
     val deviceCalendarTimeline =
@@ -615,6 +624,10 @@ fun LifeMinderApp(
                         deviceCalendars = deviceCalendars,
                         selectedCalendarIds = selectedCalendarIds,
                         onSelectedCalendarIds = { selectedCalendarIds = it; appSettings.selectedCalendarIds = it },
+                        calendarPermissionGranted = calendarPermissionGranted,
+                        onRequestCalendarPermission = onRequestCalendarPermission,
+                        onOpenCalendarPermissionSettings = onOpenCalendarPermissionSettings,
+                        onRefreshDeviceCalendars = { calendarRefreshRequest++ },
                         platformActions = platformActions,
                         padding = padding,
                     )
@@ -1772,6 +1785,10 @@ private fun MetadataSettingsScreen(
     deviceCalendars: List<DeviceCalendar>,
     selectedCalendarIds: Set<Long>,
     onSelectedCalendarIds: (Set<Long>) -> Unit,
+    calendarPermissionGranted: Boolean,
+    onRequestCalendarPermission: () -> Unit,
+    onOpenCalendarPermissionSettings: () -> Unit,
+    onRefreshDeviceCalendars: () -> Unit,
     platformActions: PlatformActions,
     padding: PaddingValues,
 ) {
@@ -1838,11 +1855,32 @@ private fun MetadataSettingsScreen(
         }
         if (testAlarmStatus.isNotBlank()) item { Text(testAlarmStatus, style = MaterialTheme.typography.bodySmall) }
         item { Text("Device calendars", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
-        if (deviceCalendars.isEmpty()) item { Text("No readable device calendars found. Grant Calendar permission and return to Settings.", style = MaterialTheme.typography.bodySmall) }
+        if (deviceCalendars.isEmpty()) {
+            item {
+                Text(
+                    if (calendarPermissionGranted) "Calendar access is allowed, but no visible device calendars were found. Refresh after adding or syncing a calendar on this phone."
+                    else "Allow Calendar access to choose which calendars appear in Today and Upcoming.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            item {
+                Button(
+                    onClick = if (calendarPermissionGranted) onRefreshDeviceCalendars else onRequestCalendarPermission,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (calendarPermissionGranted) "Refresh device calendars" else "Allow calendar access") }
+            }
+            if (!calendarPermissionGranted) {
+                item {
+                    OutlinedButton(onClick = onOpenCalendarPermissionSettings, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open Android permission settings")
+                    }
+                }
+            }
+        }
         items(deviceCalendars, key = { "calendar-${it.id}" }) { calendar ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(calendar.id in selectedCalendarIds, { checked -> onSelectedCalendarIds(if (checked) selectedCalendarIds + calendar.id else selectedCalendarIds - calendar.id) })
-                Column { Text(calendar.name); Text(calendar.accountName, style = MaterialTheme.typography.bodySmall) }
+                Column { Text(calendar.name); Text(CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER, style = MaterialTheme.typography.bodySmall) }
             }
         }
         item { Text("Data safety", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }

@@ -3,12 +3,16 @@ package com.geepscontrol.app
 import android.Manifest
 import android.app.AlarmManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import com.geepscontrol.core.data.DataPortabilityService
 import com.geepscontrol.core.database.buildDatabase
 import com.geepscontrol.core.database.ensureDefaultContexts
@@ -32,6 +36,11 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     companion object { const val EXTRA_OPEN_TODAY = "open_today" }
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var calendarPermissionRevision by mutableIntStateOf(0)
+    private val calendarPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            calendarPermissionRevision++
+        }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -62,7 +71,6 @@ class MainActivity : ComponentActivity() {
             )
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.POST_NOTIFICATIONS)
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.READ_CALENDAR)
         activityScope.launch {
             ensureDefaultContexts(contextRepository)
             ensureDefaultAlarmProfiles(lifeItemRepository, System.currentTimeMillis())
@@ -82,8 +90,22 @@ class MainActivity : ComponentActivity() {
                 dataPortability = dataPortability,
                 dataFiles = dataFiles,
                 platformActions = AndroidPlatformActions(applicationContext),
+                calendarPermissionGranted = checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED,
+                calendarPermissionRevision = calendarPermissionRevision,
+                onRequestCalendarPermission = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
+                onOpenCalendarPermissionSettings = {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.parse("package:$packageName")),
+                    )
+                },
             )
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        calendarPermissionRevision++
     }
 
     override fun onDestroy() {
