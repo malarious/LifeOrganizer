@@ -175,6 +175,7 @@ fun LifeMinderApp(
     var showQuickAdd by remember { mutableStateOf(false) }
     var selectedCalendarEvent by remember { mutableStateOf<DeviceCalendarEvent?>(null) }
     var lifeItemQuickType by remember { mutableStateOf("Reminder") }
+    var lifeItemsShowAdd by remember { mutableStateOf(false) }
     var themeMode by remember { mutableStateOf(appSettings.themeMode) }
     val projects by projectRepository.observeProjects().collectAsState(emptyList())
     val tasks by taskRepository.observeTasks().collectAsState(emptyList())
@@ -313,6 +314,7 @@ fun LifeMinderApp(
                                             taskBeingViewed = null
                                             medicationBeingViewedId = null
                                             lifeItemBeingViewed = null
+                                            if (item == AppDestination.LIFE_ITEMS) lifeItemsShowAdd = false
                                             showTopMenu = false
                                         },
                                     )
@@ -384,6 +386,19 @@ fun LifeMinderApp(
                         dependencies = tasks.filter { it.id in taskBeingViewed!!.dependencyIds }.map { it.title },
                         onBack = { taskBeingViewed = null },
                         onEdit = { taskBeingEdited = taskBeingViewed },
+                        onComplete = {
+                            taskBeingViewed?.let(completeTask)
+                            taskBeingViewed = null
+                        },
+                        onDelete = {
+                            taskBeingViewed?.let { task ->
+                                scope.launch {
+                                    taskRepository.delete(task)
+                                    if (snackbar.showSnackbar("Task deleted", "Undo") == SnackbarResult.ActionPerformed) taskRepository.restore(task)
+                                }
+                            }
+                            taskBeingViewed = null
+                        },
                         padding = padding,
                     )
                 selectedProject != null ->
@@ -496,7 +511,26 @@ fun LifeMinderApp(
                         padding = padding,
                     )
                 destination == AppDestination.LIFE_ITEMS ->
-                    LifeItemsScreen(reminders, routines, routineOccurrences, medications, medicationOccurrences, events, lifeAlarms, standaloneTimers, timerPresets, lifeItemQuickType, lifeItemRepository, alarmScheduler, padding)
+                    LifeItemsScreen(
+                        reminders,
+                        routines,
+                        routineOccurrences,
+                        medications,
+                        medicationOccurrences,
+                        events,
+                        lifeAlarms,
+                        standaloneTimers,
+                        timerPresets,
+                        lifeItemQuickType,
+                        lifeItemsShowAdd,
+                        onOpenMedication = { medicationId ->
+                            lifeItemsShowAdd = false
+                            medicationBeingViewedId = medicationId
+                        },
+                        repository = lifeItemRepository,
+                        alarmScheduler = alarmScheduler,
+                        padding = padding,
+                    )
                 destination == AppDestination.UPCOMING ->
                     UpcomingScreen(timeline + deviceCalendarTimeline, now, padding)
                 destination == AppDestination.TRIPS ->
@@ -787,11 +821,12 @@ fun LifeMinderApp(
                     val scheduleColor = ButtonDefaults.buttonColors(containerColor = Color(0xFF006B5F), contentColor = Color.White)
                     Button(onClick = { close { pendingTripTaskId = selectedTripId.takeIf { destination == AppDestination.TRIPS }; taskBeingEdited = Task(title = "", projectId = selectedProject?.id, status = if (selectedProject == null) TaskStatus.INBOX else TaskStatus.READY) } }, modifier = Modifier.fillMaxWidth()) { Text(if (selectedTripId != null && destination == AppDestination.TRIPS) "Trip task" else "Task") }
                     Button(onClick = { close { projectBeingEdited = Project(name = "") } }, modifier = Modifier.fillMaxWidth(), colors = purple) { Text("Project") }
-                    Button(onClick = { close { lifeItemQuickType = "Reminder"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = purple) { Text("Reminder") }
+                    Button(onClick = { close { lifeItemQuickType = "Reminder"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = purple) { Text("Reminder") }
                     Button(onClick = { close { destination = AppDestination.TIMERS; timerCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth(), colors = timeColor) { Text("Timer") }
                     Button(onClick = { close { destination = AppDestination.TIMERS; alarmCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth(), colors = timeColor) { Text("Alarm") }
-                    Button(onClick = { close { lifeItemQuickType = "Event"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Event") }
-                    Button(onClick = { close { lifeItemQuickType = "Routine"; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Routine") }
+                    Button(onClick = { close { lifeItemQuickType = "Medication"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Medication") }
+                    Button(onClick = { close { lifeItemQuickType = "Event"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Event") }
+                    Button(onClick = { close { lifeItemQuickType = "Routine"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Routine") }
                     OutlinedButton(onClick = { close { selectedTripId = null; destination = AppDestination.TRIPS } }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
                     if (destination == AppDestination.TRIPS && selectedTripId != null) OutlinedButton(onClick = { close { tripEntryRequest += 1 } }, modifier = Modifier.fillMaxWidth()) { Text("Place") }
                 }
@@ -1185,8 +1220,11 @@ private fun TaskDetailScreen(
     dependencies: List<String>,
     onBack: () -> Unit,
     onEdit: () -> Unit,
+    onComplete: () -> Unit,
+    onDelete: () -> Unit,
     padding: PaddingValues,
 ) {
+    var confirmDelete by remember(task.id) { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1196,6 +1234,14 @@ private fun TaskDetailScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onBack) { Text("Back") }
                 Button(onClick = onEdit) { Text("Edit task") }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
+                    Button(onClick = onComplete, modifier = Modifier.weight(1f)) { Text("Complete") }
+                }
+                OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.weight(1f)) { Text("Delete") }
             }
         }
         item { Text(task.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
@@ -1217,6 +1263,23 @@ private fun TaskDetailScreen(
         if (dependencies.isNotEmpty()) item { Text("Depends on: ${dependencies.joinToString()}") }
         if (task.isBlocked) item { Text("Blocked by: ${task.blockingTaskTitles.joinToString()}", color = MaterialTheme.colorScheme.error) }
         task.completedAt?.let { item { Text("Completed: ${formatAlarmTime(it)}") } }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete task?") },
+            text = { Text("Delete \"${task.title}\"? You can undo immediately afterward.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -2606,12 +2669,15 @@ private fun LifeItemsScreen(
     timers: List<StandaloneTimerEntity>,
     presets: List<com.geepscontrol.core.database.TimerPresetEntity>,
     initialType: String,
+    showAddInitially: Boolean,
+    onOpenMedication: (Long) -> Unit,
     repository: LifeItemRepository,
     alarmScheduler: AlarmScheduler,
     padding: PaddingValues,
 ) {
     var title by remember { mutableStateOf("") }
     var type by remember(initialType) { mutableStateOf(initialType) }
+    var showAdd by remember(initialType, showAddInitially) { mutableStateOf(showAddInitially) }
     var durationMinutes by remember { mutableStateOf("10") }
     var details by remember { mutableStateOf("") }
     var timezone by remember { mutableStateOf("America/New_York") }
@@ -2622,8 +2688,15 @@ private fun LifeItemsScreen(
     var scheduleMinute by remember { mutableStateOf((((initialScheduleAt % DAY_MILLIS) / 60_000L) % 60).toString().padStart(2, '0')) }
     var showScheduleDatePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val types = listOf("Reminder", "Routine", "Event", "Alarm", "Timer")
+    val types = listOf("Reminder", "Routine", "Medication", "Event", "Alarm", "Timer")
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { showAdd = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (!showAdd) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text("Saved items") }
+                OutlinedButton(onClick = { showAdd = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (showAdd) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text("Add new") }
+            }
+        }
+        if (showAdd) {
         item { Text("Quick add", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { types.take(3).forEach { value -> OutlinedButton(onClick = { type = value }) { Text(if (type == value) "$value ✓" else value) } } } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { types.drop(3).forEach { value -> OutlinedButton(onClick = { type = value }) { Text(if (type == value) "$value ✓" else value) } } } }
@@ -2690,6 +2763,7 @@ private fun LifeItemsScreen(
                             }
                         }
                         title = ""
+                        showAdd = false
                     }
                 }
             }, modifier = Modifier.fillMaxWidth()) { Text("Save $type") }
@@ -2704,7 +2778,9 @@ private fun LifeItemsScreen(
                 }
             }, modifier = Modifier.fillMaxWidth()) { Text("Start ${preset.name} · ${preset.durationSeconds / 60} min") }
         }
-        item { Text("Saved items", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+        }
+        if (!showAdd) {
+        item { Text("Saved life items", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
         items(reminders, key = { "reminder-${it.id}" }) { value ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
@@ -2741,7 +2817,7 @@ private fun LifeItemsScreen(
             }
         }
         items(medications, key = { "medication-${it.id}" }) { value ->
-            Card(Modifier.fillMaxWidth()) {
+            Card(Modifier.fillMaxWidth().clickable { onOpenMedication(value.id) }) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.name, fontWeight = FontWeight.SemiBold)
                     Text("Medication · ${if (value.active) "active" else "paused"}${value.quantityRemaining?.let { " · $it remaining" }.orEmpty()}")
@@ -2842,6 +2918,7 @@ private fun LifeItemsScreen(
                     }
                 }
             }
+        }
         }
     }
     if (showScheduleDatePicker) {
