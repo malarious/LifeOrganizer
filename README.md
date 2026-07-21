@@ -1,162 +1,197 @@
 # Life Minder
 
-Life Minder is a local-first Android organizer for tasks, schedules, reminders, routines, medications, events, alarms, timers, reviews, and travel information. It is designed to work without an account, subscription, cloud service, telemetry, advertising, or AI dependency.
+Life Minder is a local-first Android organizer for tasks, projects, daily planning, reminders, routines, medications, events, alarms, timers, reviews, and trips.
 
-The product is actively evolving. Its data and scheduling foundations are implemented, while navigation, terminology, screen structure, and visual layout are still open to revision.
+Built collaboratively with **Codex using GPT-5.6** as part of **OpenAI Build Week**.
 
-## Current capabilities
+The installed app does not depend on AI, an account, a subscription, telemetry, advertising, or a cloud service. Its core features work offline and store user data locally.
 
-### Tasks and planning
+---
 
-- Plans/projects, trips, short-term checklists, unassigned-task capture, search, tags, dependencies, five-level colored priorities, effort requirements, date/time scheduling, recurrence, and blocked-state explanations
-- Today-first planning with a unified timeline, current-date reconciliation for repeating alarms, overdue/upcoming grouping, and direct navigation from timeline cards to the relevant task, trip, life-item, alarm, or timer screen
-- Do Now recommendations based on available time, energy, priority, dependencies, urgency, and prior feedback; available time is adjustable from 5 to 120 minutes in five-minute increments
-- Completion, cancellation, deletion, undo, recurring-task history, and task-linked work sessions
-- Persistent light/dark appearance selection with theme-aware cards and controls
+## Why We Built It
 
-### Time and life items
+Many productivity tools divide everyday life among separate task, calendar, reminder, timer, and travel apps. Life Minder brings those responsibilities into one timeline so users can see what needs attention now without keeping the entire plan in their heads.
 
-- Standalone reminders with complete, dismiss, snooze, and recurrence behavior
-- Routines with occurrences, completion, skip, pause/resume, history, and completion rates
-- Medication schedules and occurrence records with taken, skipped, snoozed, correction, and optional refill quantities
-- Events with duration, location fields, recurrence, and explicit time-zone identifiers
-- Standalone alarms with enable/disable, sound, vibration, configurable snooze duration storage, acknowledgment, deletion, editing, and restart restoration
-- Multiple simultaneous countdown timers with optional names, one-tap quick durations, hours/minutes/seconds custom entry, favorite presets, recent restart/save actions, a custom audible completion screen, automatic removal after acknowledgment, enable/disable controls, and timer deletion
-- Stopwatch and task-linked productivity timers with millisecond display, pause/resume, time adjustment, overtime calculations, and persistent work-session history (sessions shorter than one minute are omitted)
-- Clock alarms with an app-owned queued alarm screen, five bundled music tracks, simultaneous music/vibration, delayed vibration modes, gradual volume ramps, snooze limits, Standard/Hold/Number/Trace dismissal, an accessible emergency fallback, weekday selection, and once, weekly, bi-weekly, monthly, or custom hourly/daily/weekly/monthly recurrence
-- Live reusable alarm profiles with built-in Gentle, Standard, Heavy Sleeper, Silent Vibration, and Reminder defaults; built-ins are copied before customization and existing alarms retain their sound/vibration behavior during migration
-- Repeating-alarm acknowledgment advances the persisted date to the next valid future occurrence and reschedules it
-- Upcoming filtering and a Today timeline that distinguishes actionable items from passive events while excluding timers from overdue treatment
+The goal is a practical personal organizer: one place for immediate responsibilities, longer-term projects, recurring routines, time-sensitive alerts, and travel plans.
 
-Life Minder medication features are organizational aids only. They do not provide dosing, interaction, diagnostic, or other medical advice.
+---
 
-### Trips and itineraries
+## Features
 
-- Offline trips with dates, status, notes, time zones, and overview warnings
-- Typed itinerary entries including flights, trains, lodging, events, restaurants, activities, transfers, and general entries
-- Transportation and lodging details, confirmation information, addresses, contacts, websites, and sensitive reference cards
-- Existing-task associations, itinerary reminders, conflict detection, duplication, and moving entries between days
-- Task-first trip views with Add Task and Add Place actions, editable place cards, completion controls, and automatic hiding of completed, cancelled, or already-ended itinerary entries
-- Android handoff to installed map, dialer, and browser applications, plus clipboard copying
-- Full JSON portability and a trip-only package service with sensitive-field redaction
+- Tasks, projects, checklists, priorities, dependencies, tags, recurrence, and search
+- Today timeline with current, upcoming, earlier, overdue, and all-day items
+- **Do Now** recommendations based on time, energy, urgency, priority, and task dependencies
+- Reminders and routines with completion, snooze, skip, pause, and history
+- Medication schedules and occurrence records
+- Read-only display of events from user-selected device calendars
+- Calendar privacy mode that censors calendar names and account addresses while retaining event titles
+- Standalone countdown timers, reusable presets, recent timers, and a stopwatch
+- Clock alarms with recurrence, snooze limits, volume ramps, vibration modes, bundled music, and dismissal challenges
+- Daily and weekly reviews, work-session history, and productivity summaries
+- Offline trip planning with itinerary entries, transportation, lodging, places, linked tasks, and conflict warnings
+- JSON import/export, CSV task export, and local database backup and restore
+- Light and dark themes
 
-Binary trip attachments are intentionally deferred until they can be included safely in a validated archive backup.
+Life Minder's medication features are organizational aids only and do not provide medical advice.
 
-### Reviews and data safety
+---
 
-- Daily and weekly reviews, work-session history, focus summaries, and task/project analytics
-- Human-readable versioned JSON export/import, CSV task export, and relationship validation before import
-- Raw database backup/restore with rollback protection and confirmed local-data deletion
-- Room migrations from schema version 1 through the current version 13 without destructive fallback
+## How Codex and GPT-5.6 Were Used
 
-## Platform and privacy
+Life Minder was created through an iterative collaboration between the product owner and Codex using GPT-5.6.
 
-- Production target: Android 8.0/API 26 or newer
-- Compile target: Android SDK 36 with Build Tools 36.0.0
-- Core operation is offline; the application does not request Internet permission
-- External maps and websites may require connectivity through their installed applications
-- User data is stored locally in the Room/SQLite database
+The product owner:
 
-Android permissions currently used:
+- Defined the goals, workflows, priorities, and desired behavior
+- Tested builds on a real Android phone through USB debugging and device mirroring
+- Supplied screenshots and detailed feedback about layout, readability, and behavior
+- Exercised features with real device services such as calendars, alarms, audio, and notifications
+- Reviewed each iteration and directed the next changes
 
-- Notifications
-- Exact alarms; Android 12 and newer users are prompted to grant Alarms & reminders access so short timers are not silently treated as inexact work
-- Vibration
-- Device-boot reception to restore enabled alarms, reminders, and timers
-- Read-only device calendar access for user-selected calendars shown in Today and Upcoming
-- Optional NFC access for NFC alarm-ending challenges on supported devices
+Codex:
 
-Manufacturer battery-management policies can still delay background delivery. Life Minder does not claim to bypass Android or device-vendor restrictions.
+- Inspected and extended the application architecture
+- Implemented features and UI changes from that feedback
+- Diagnosed bugs using source inspection, builds, tests, and the connected Android device
+- Refactored code while preserving existing data and behavior
+- Generated and integrated application resources
+- Built, tested, installed, and verified development versions
+- Maintained project documentation
 
-## Reviewer walkthrough
+The working loop was straightforward: the product owner tested the app and explained what worked or felt wrong; Codex implemented and verified a change; then the result was tested again. Codex acted as an engineering collaborator, not as a one-time code generator.
 
-The five primary destinations are **Today**, **Do Now**, **Tasks**, **Plans**, and **Timers**. Additional destinations such as Upcoming, Trips, Reviews, life items, and Settings are available from the application menu.
+GPT-5.6 is part of the development story, not a runtime dependency. Life Minder does not currently send user data to an AI service or offer in-app generative-AI features.
 
-The global `+` action opens a compact quick-add menu without changing the five-tab navigation. Timers uses internal Timers/Alarms segmentation rather than a sixth tab.
+---
 
-For a focused review:
+## Technology
 
-1. Grant notification access if reviewing ordinary task/review reminders, and grant **Alarms & reminders** access when prompted for exact alarms and short countdown timers.
-2. Create a task with a due date, add it to Today, and tap its Today card to return to the task editor.
-3. Adjust Do Now's time slider and effort control to verify recommendation filtering and ranking.
-4. Start a named or unnamed one-minute timer. At completion, the app-owned screen should sound and vibrate; Acknowledge removes the completed standalone timer.
-5. Create a repeating alarm and use Snooze or Acknowledge on the app-owned alarm screen. Acknowledgment should retain the alarm and advance its stored occurrence.
-6. Create a trip, add a linked task and a place, then tap the place to edit it or mark it complete. Completed and already-ended entries should leave the current/upcoming trip view.
-7. Enable dark mode in Settings and inspect Today, Timers, Plans, and trip cards for readable theme-aware contrast.
+- **Platform:** Android 8.0/API 26 or newer
+- **Language:** Kotlin
+- **UI:** Compose Multiplatform and Material 3
+- **Architecture:** Kotlin Multiplatform shared module with an Android application module
+- **Storage:** Room with bundled SQLite; schema migrations preserve local data
+- **Concurrency:** Kotlin Coroutines and Flow
+- **Build:** Gradle, Android Gradle Plugin, KSP, and JDK 21 producing Java 17-compatible bytecode
+- **Android integrations:** Calendar Provider, notifications, exact alarms, boot recovery, vibration, NFC, maps, browser, dialer, and clipboard
+- **AI during development:** Codex using GPT-5.6
 
-## Requirements
+The app deliberately does not request Android Internet permission. External map and website applications may require their own network connections.
 
-- Android Studio with Android SDK Platform 36
+---
+
+## Installation and Development
+
+### Requirements
+
+- Android Studio
+- Android SDK Platform 36 and Build Tools 36.0.0
 - Android Studio's bundled JDK 21
-- Android emulator or physical device running API 26 or newer
+- An emulator or physical Android device running API 26 or newer
 
-The project produces Java 17-compatible Android bytecode. On this development machine Android Studio and its JDK are installed on `D:`, but the project does not require that location.
+Clone the repository:
 
-## Open and run in Android Studio
-
-1. Open this repository directory in Android Studio.
-2. Allow Gradle synchronization to finish.
-3. If prompted for a Gradle JDK, select Android Studio's bundled JDK 21.
-4. Select the `androidApp` run configuration.
-5. Choose an emulator or connected Android device and press Run.
-
-After changing source code, Android Studio normally rebuilds and reinstalls the application when Run is pressed. The emulator does not need to be shut down between builds.
-
-## Command-line development
-
-With a suitable JDK and Android SDK configured:
-
-```powershell
-.\gradlew.bat :shared:desktopTest --no-daemon --no-configuration-cache
-.\gradlew.bat :shared:connectedDebugAndroidTest --no-daemon --no-configuration-cache
-.\gradlew.bat :androidApp:lintDebug --no-daemon --no-configuration-cache
-.\gradlew.bat :androidApp:assembleDebug --no-daemon --no-configuration-cache
-.\gradlew.bat :androidApp:assembleRelease --no-daemon --no-configuration-cache
-.\gradlew.bat spotlessCheck --no-daemon --no-configuration-cache
+```bash
+git clone <repository-url>
+cd LifeOrganizer
 ```
 
-Room schema generation for the desktop and Android targets should be run sequentially. Running both KSP targets concurrently can make them compete for the same generated schema file. Formatting and release compilation should also be run separately if Gradle reports a temporary build-directory race.
+Open the repository in Android Studio, allow Gradle synchronization to finish, select the `androidApp` run configuration, and run it on an emulator or connected device.
 
-APK outputs:
+From PowerShell, a debug build can be created with:
 
-- Debug: `androidApp/build/outputs/apk/debug/androidApp-debug.apk`
-- Release: `androidApp/build/outputs/apk/release/androidApp-release.apk`
+```powershell
+.\gradlew.bat :androidApp:assembleDebug
+```
 
-## Architecture
+Run the shared tests with:
 
-- `androidApp` contains Android packaging, the activity, notifications, alarms, boot recovery, file operations, and external application actions.
-- `shared` contains the Compose UI, Room database, repositories, domain services, scheduling calculations, unified timeline, portability logic, and shared tests.
-- `shared/schemas` contains the exported Room schema history used for migration verification.
-- `docs` contains product requirements, architecture decisions, milestone records, privacy/release notes, and manual verification checklists.
+```powershell
+.\gradlew.bat :shared:desktopTest
+```
 
-Existing tasks remain in the original task model so Do Now recommendations and project behavior are preserved. Reminders, routines, medications, events, alarms, timers, trips, and itinerary entries use specialized records and are normalized by `UnifiedTimelineService` for combined Today and Upcoming displays.
+The debug APK is written to:
 
-The user-facing name is Life Minder. The existing Android application ID, Kotlin package namespace, and database filename retain their original `com.geepscontrol` identity to preserve upgrade and user-data compatibility.
+```text
+androidApp/build/outputs/apk/debug/androidApp-debug.apk
+```
 
-## Current design status
+---
 
-Milestones 0–6 are implemented. Milestones 7 and 8 have working architecture and primary workflows, but the product should still be treated as pre-release while its interaction design is reconsidered.
+## Usage
 
-Areas deliberately open for revision include:
+1. Launch Life Minder and complete the short setup flow.
+2. Add tasks directly or organize them into projects and trips.
+3. Use Today to review scheduled, current, all-day, and overdue items.
+4. Use Do Now when you want a recommendation based on your available time and energy.
+5. Create reminders, routines, alarms, or timers for time-sensitive responsibilities.
+6. Optionally grant read-only calendar access and choose which device calendars appear in Today and Upcoming.
+7. Use Reviews to record progress and adjust upcoming priorities.
 
-- The primary navigation is Today, Do Now, Tasks, Plans, and Timers; the internal legacy `INBOX` identifier is displayed as Unassigned for data compatibility
-- Tasks default to no project, and project selection appears only when requested
-- Task priority and effort use five-level sliders; Do Now uses a five-minute-step availability slider; project and task colors provide visual scanning cues
-- Plans displays project and trip cards together; adding asks for a project or trip, while an open trip emphasizes linked tasks and keeps travel details collapsible
-- The global add workflow and density of item editors
-- Today, Do Now, Upcoming, and timeline presentation continue to be refined, although their primary workflows are functional
-- Terminology and grouping across tasks, routines, reminders, alarms, and events
-- Some advanced editing and correction workflows across reminders, routines, medications, and events
-- Advanced itinerary ordering and trip-only import/export exposure in the UI
-- Overall visual design, spacing, typography, and one-handed usability
+Notification, exact-alarm, calendar, and NFC permissions are requested only for features that need them. Manufacturer battery-management policies can still affect background delivery.
 
-See [product requirements](docs/product-requirements.md), [architecture](docs/architecture.md), [alarm/timer refinement notes](docs/alarm-timer-refinement.md), [milestone status](docs/milestones.md), [release readiness](docs/release-readiness.md), [privacy](PRIVACY.md), and the [changelog](CHANGELOG.md) for more detail.
+---
 
-## Development principles
+## Project Structure
 
-- Preserve existing user data and provide a migration for every schema change.
-- Keep scheduling, recurrence, medication, timeline, and conflict rules outside UI widgets.
-- Keep alarms distinct from ordinary notifications and standalone timers distinct from productivity sessions.
-- Reuse the existing task model for trip preparation and follow-up tasks.
-- Validate imports before modifying local data and never silently discard unsupported records.
-- Do not add cloud services, accounts, telemetry, advertising, or network requirements without an explicit product decision.
+```text
+LifeOrganizer/
+|-- androidApp/              Android packaging and platform integrations
+|   `-- src/main/
+|       |-- kotlin/          Activity, alarms, notifications, audio, and device actions
+|       |-- res/             Android resources and launcher icons
+|       `-- assets/          Bundled alarm music
+|-- shared/                  Shared Compose UI, domain logic, Room data, and tests
+|   |-- schemas/             Exported Room schema history
+|   `-- src/
+|       |-- commonMain/      UI, repositories, models, and services
+|       |-- commonTest/      Shared tests
+|       |-- androidMain/     Android-specific shared implementations
+|       `-- desktopMain/     Desktop test implementations
+|-- docs/                    Requirements, architecture, milestones, and verification notes
+|-- Audio/                   Source audio used for bundled alarm tracks
+|-- PRIVACY.md               Privacy details
+`-- CHANGELOG.md             Project change history
+```
+
+The `androidApp` module owns Android-specific behavior. The `shared` module contains the Compose UI, database, repositories, scheduling rules, unified timeline, portability logic, and most tests.
+
+---
+
+## Privacy
+
+- Core operation is offline.
+- User data is stored locally in Room/SQLite.
+- No account or cloud synchronization is required.
+- No telemetry or advertising SDK is included.
+- Calendar access is read-only and limited in the UI to calendars selected by the user.
+- Recording privacy mode hides calendar names and account addresses without hiding test event titles.
+
+See [PRIVACY.md](PRIVACY.md) for additional details.
+
+---
+
+## Future Work
+
+- Continued accessibility, typography, spacing, and one-handed-use refinement
+- Broader automated and on-device testing across Android versions and manufacturers
+- More advanced calendar presentation and refresh diagnostics
+- Additional correction and editing workflows for recurring life items
+- Safer archive support for trip attachments
+- Release signing, store packaging, and final pre-release hardening
+
+Cloud services, accounts, telemetry, and runtime AI are not assumed future features; adding any of them would require an explicit product and privacy decision.
+
+---
+
+## License
+
+No open-source license has been selected or added yet. Until that changes, the repository should not be treated as granting permission to copy, modify, or redistribute the code.
+
+---
+
+## Acknowledgements
+
+Created for **OpenAI Build Week** through a hands-on collaboration between the product owner and **Codex using GPT-5.6**.
+
+For deeper implementation details, see the [product requirements](docs/product-requirements.md), [architecture notes](docs/architecture.md), [milestone status](docs/milestones.md), [release-readiness notes](docs/release-readiness.md), and [changelog](CHANGELOG.md).
