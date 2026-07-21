@@ -140,12 +140,6 @@ import kotlinx.coroutines.launch
 // Temporary recording-safe label: keep the real account internal for calendar access.
 private const val CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER = "PlaceHolder@gmail.com"
 private const val CALENDAR_NAME_RECORDING_PLACEHOLDER = "Private calendar"
-private val CALENDAR_NAME_RECORDING_SUFFIXES = listOf(".edu", ".com", ".net")
-
-private fun calendarNameForRecording(name: String): String {
-    val normalized = name.trim().lowercase()
-    return if (CALENDAR_NAME_RECORDING_SUFFIXES.any(normalized::endsWith)) CALENDAR_NAME_RECORDING_PLACEHOLDER else name
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -200,12 +194,16 @@ fun LifeMinderApp(
     val tags by tagRepository.observeTags().collectAsState(emptyList())
     val now = currentTimeMillis()
     var selectedCalendarIds by remember { mutableStateOf(appSettings.selectedCalendarIds) }
+    var calendarPrivacyMode by remember { mutableStateOf(appSettings.calendarPrivacyMode) }
     var calendarRefreshRequest by remember { mutableIntStateOf(0) }
-    val deviceCalendars =
+    val rawDeviceCalendars =
         remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest) {
-            platformActions.deviceCalendars().map { it.copy(name = calendarNameForRecording(it.name)) }
+            platformActions.deviceCalendars()
         }
-    val deviceCalendarEvents = remember(destination, selectedCalendarIds, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
+    val deviceCalendars = remember(rawDeviceCalendars, calendarPrivacyMode) {
+        if (calendarPrivacyMode) rawDeviceCalendars.map { it.copy(name = CALENDAR_NAME_RECORDING_PLACEHOLDER) } else rawDeviceCalendars
+    }
+    val deviceCalendarEvents = remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
     val deviceCalendarNames = deviceCalendars.associate { it.id to it.name }
     val deviceCalendarTimeline =
         deviceCalendarEvents.map { event ->
@@ -634,6 +632,8 @@ fun LifeMinderApp(
                         deviceCalendars = deviceCalendars,
                         selectedCalendarIds = selectedCalendarIds,
                         onSelectedCalendarIds = { selectedCalendarIds = it; appSettings.selectedCalendarIds = it },
+                        calendarPrivacyMode = calendarPrivacyMode,
+                        onCalendarPrivacyMode = { calendarPrivacyMode = it; appSettings.calendarPrivacyMode = it },
                         calendarPermissionGranted = calendarPermissionGranted,
                         onRequestCalendarPermission = onRequestCalendarPermission,
                         onOpenCalendarPermissionSettings = onOpenCalendarPermissionSettings,
@@ -1795,6 +1795,8 @@ private fun MetadataSettingsScreen(
     deviceCalendars: List<DeviceCalendar>,
     selectedCalendarIds: Set<Long>,
     onSelectedCalendarIds: (Set<Long>) -> Unit,
+    calendarPrivacyMode: Boolean,
+    onCalendarPrivacyMode: (Boolean) -> Unit,
     calendarPermissionGranted: Boolean,
     onRequestCalendarPermission: () -> Unit,
     onOpenCalendarPermissionSettings: () -> Unit,
@@ -1865,6 +1867,8 @@ private fun MetadataSettingsScreen(
         }
         if (testAlarmStatus.isNotBlank()) item { Text(testAlarmStatus, style = MaterialTheme.typography.bodySmall) }
         item { Text("Device calendars", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }
+        item { SettingSwitch("Hide calendar names and accounts", calendarPrivacyMode, onCalendarPrivacyMode) }
+        if (calendarPrivacyMode) item { Text("Recording privacy is on. Calendar events still appear normally.", style = MaterialTheme.typography.bodySmall) }
         if (deviceCalendars.isEmpty()) {
             item {
                 Text(
@@ -1890,7 +1894,10 @@ private fun MetadataSettingsScreen(
         items(deviceCalendars, key = { "calendar-${it.id}" }) { calendar ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(calendar.id in selectedCalendarIds, { checked -> onSelectedCalendarIds(if (checked) selectedCalendarIds + calendar.id else selectedCalendarIds - calendar.id) })
-                Column { Text(calendar.name); Text(CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER, style = MaterialTheme.typography.bodySmall) }
+                Column {
+                    Text(calendar.name)
+                    Text(if (calendarPrivacyMode) CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER else calendar.accountName, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         item { Text("Data safety", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 12.dp)) }

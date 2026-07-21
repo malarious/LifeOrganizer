@@ -14,4 +14,5 @@ interface AppSettings {
     var quietEndHour: Int
     var onboardingCompleted: Boolean
     var selectedCalendarIds: Set<Long>
+    var calendarPrivacyMode: Boolean
 }
