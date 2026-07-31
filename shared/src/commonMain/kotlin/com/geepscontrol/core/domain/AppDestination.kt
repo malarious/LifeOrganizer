@@ -13,6 +13,7 @@ enum class AppDestination(
     TIMERS("Timers", "◷", true),
     LIFE_ITEMS("Life Items", "+", false),
     TRIPS("Trips", "✈", false),
+    PIXEL_STUDIO("Pixel Studio", "▦", false),
     REVIEW("Review", "✓", false),
     SETTINGS("Settings", "⚙", false),
 }

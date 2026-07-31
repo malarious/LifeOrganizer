@@ -37,6 +37,9 @@ class AndroidDataFileGateway(
         listOf(source, File(source.path + "-wal"), File(source.path + "-shm")).filter(File::isFile).forEach { file ->
             file.copyTo(File(folder, file.name), overwrite = true)
         }
+        File(context.filesDir, "pixel-studio")
+            .takeIf(File::isDirectory)
+            ?.copyRecursively(File(folder, "pixel-studio"), overwrite = true)
         require(hasSqliteHeader(File(folder, source.name))) { "Backup validation failed" }
         return folder.absolutePath
     }
@@ -58,13 +61,21 @@ class AndroidDataFileGateway(
                 target.delete()
             }
         }
+        val pixelBackup = File(backup, "pixel-studio")
+        if (pixelBackup.isDirectory) {
+            val pixelTarget = File(context.filesDir, "pixel-studio")
+            pixelTarget.deleteRecursively()
+            pixelBackup.copyRecursively(pixelTarget, overwrite = true)
+        }
         require(hasSqliteHeader(source)) { "Restore verification failed; rollback is at ${rollback.absolutePath}" }
         return "Restored ${backup.name}. Restart Life Minder before continuing. Rollback: ${rollback.absolutePath}"
     }
 
     override suspend fun deleteAllLocalData(): String {
         database.close()
-        check(context.deleteDatabase(DATABASE_NAME)) { "Database could not be deleted" }
+        val databaseDeleted = context.deleteDatabase(DATABASE_NAME)
+        File(context.filesDir, "pixel-studio").deleteRecursively()
+        check(databaseDeleted) { "Database could not be deleted" }
         return "All local database data deleted. Restart Life Minder."
     }
 

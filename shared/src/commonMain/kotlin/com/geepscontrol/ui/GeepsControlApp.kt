@@ -451,6 +451,7 @@ fun LifeMinderApp(
                                     AppDestination.UPCOMING,
                                     AppDestination.LIFE_ITEMS,
                                     AppDestination.TRIPS,
+                                    AppDestination.PIXEL_STUDIO,
                                     AppDestination.REVIEW,
                                     AppDestination.SETTINGS,
                                 ).forEach { item ->
@@ -477,7 +478,7 @@ fun LifeMinderApp(
             },
             snackbarHost = { SnackbarHost(snackbar) },
             floatingActionButton = {
-                if (taskBeingViewed == null && medicationBeingViewed == null && lifeItemBeingViewed == null) {
+                if (taskBeingViewed == null && medicationBeingViewed == null && lifeItemBeingViewed == null && destination != AppDestination.PIXEL_STUDIO) {
                     FloatingActionButton(
                         onClick = { showQuickAdd = true },
                         modifier = if (destination == AppDestination.TIMERS) Modifier.padding(bottom = 64.dp) else Modifier,
@@ -745,6 +746,8 @@ fun LifeMinderApp(
                         platformActions = platformActions,
                         padding = padding,
                     )
+                destination == AppDestination.PIXEL_STUDIO ->
+                    PixelStudioScreen(padding)
                 destination == AppDestination.TODAY ->
                     UnifiedTodayScreen(
                         timeline = timeline.mapNotNull { item ->

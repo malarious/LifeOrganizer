@@ -1,6 +1,6 @@
 # Life Minder
 
-Life Minder is a local-first Android organizer for tasks, projects, daily planning, reminders, routines, medications, events, alarms, timers, reviews, and trips.
+Life Minder is a local-first Android organizer for tasks, projects, daily planning, reminders, routines, medications, events, alarms, timers, reviews, and trips, with an integrated offline Pixel Studio for sprite creation.
 
 Built collaboratively with **Codex using GPT-5.6** as part of **OpenAI Build Week**.
 
@@ -29,6 +29,7 @@ The goal is a practical personal organizer: one place for immediate responsibili
 - Clock alarms with recurrence, snooze limits, volume ramps, vibration modes, bundled music, and dismissal challenges
 - Daily and weekly reviews, work-session history, and productivity summaries
 - Offline trip planning with itinerary entries, transportation, lodging, places, linked tasks, and conflict warnings
+- Offline Pixel Studio with smart resizing, image pixelification, palettes, drawing tools, layers, animation frames, rotations, and sprite-sheet export
 - JSON import/export, CSV task export, and local database backup and restore
 - Light and dark themes
 
