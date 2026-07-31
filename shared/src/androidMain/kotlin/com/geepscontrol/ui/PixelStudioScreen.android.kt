@@ -378,6 +378,7 @@ private fun PixelEditor(
                 selectedColor = selectedColor,
                 brushSize = brushSize,
                 cellSizeDp = zoom,
+                editable = !playing,
                 onColorPicked = { selectedColor = it },
                 onPixelsChanged = { commit(project.withActivePixels(it)) },
             )
@@ -438,6 +439,7 @@ private fun PixelCanvas(
     selectedColor: Int,
     brushSize: Int,
     cellSizeDp: Float,
+    editable: Boolean,
     onColorPicked: (Int) -> Unit,
     onPixelsChanged: (PixelBitmap) -> Unit,
 ) {
@@ -470,12 +472,11 @@ private fun PixelCanvas(
     var dragPixels by remember { mutableStateOf(activePixels) }
     val horizontal = rememberScrollState()
     val vertical = rememberScrollState()
-    Box(
-        Modifier.fillMaxWidth().height(420.dp).background(Color(0xff202124)).horizontalScroll(horizontal).verticalScroll(vertical),
-    ) {
-        Canvas(
+    val interactionModifier =
+        if (!editable) {
             Modifier
-                .size((project.width * cellSizeDp).dp, (project.height * cellSizeDp).dp)
+        } else {
+            Modifier
                 .pointerInput(project.width, project.height, project.activeFrame, project.activeLayer, tool, selectedColor, brushSize, cellSizeDp, activePixels) {
                     detectTapGestures { offset ->
                         val x = floor(offset.x / cellSizeDp.dp.toPx()).toInt().coerceIn(0, project.width - 1)
@@ -515,7 +516,15 @@ private fun PixelCanvas(
                         dragStart = end
                         change.consume()
                     }
-                },
+                }
+        }
+    Box(
+        Modifier.fillMaxWidth().height(420.dp).background(Color(0xff202124)).horizontalScroll(horizontal).verticalScroll(vertical),
+    ) {
+        Canvas(
+            Modifier
+                .size((project.width * cellSizeDp).dp, (project.height * cellSizeDp).dp)
+                .then(interactionModifier),
         ) {
             drawImage(checker, dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()), filterQuality = FilterQuality.None)
             previous?.let {
@@ -529,6 +538,13 @@ private fun PixelCanvas(
                 repeat(project.width + 1) { x -> drawLine(Color.Black.copy(alpha = 0.28f), Offset(x * cellWidth, 0f), Offset(x * cellWidth, size.height), 1f) }
                 repeat(project.height + 1) { y -> drawLine(Color.Black.copy(alpha = 0.28f), Offset(0f, y * cellHeight), Offset(size.width, y * cellHeight), 1f) }
             }
+        }
+        if (!editable) {
+            Text(
+                "Animation preview — editing paused",
+                color = Color.White,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
     }
 }
@@ -883,28 +899,54 @@ private fun ExportControls(project: PixelProject, onExport: (PixelBitmap, String
     var scale by remember { mutableIntStateOf(1) }
     var columns by remember(project.frames.size) { mutableIntStateOf(project.frames.size.coerceAtMost(8)) }
     val frames = project.frames.map { PixelEngine.flatten(it, project.width, project.height) }
+    val maximumFrameScale = PixelEngine.maximumExportScale(project.width, project.height)
+    val safeScale = scale.coerceAtMost(maximumFrameScale)
+    val sheetColumns = columns.coerceIn(1, project.frames.size)
+    val sheetRows = kotlin.math.ceil(project.frames.size.toDouble() / sheetColumns).toInt()
+    val sheetWidth = project.width.toLong() * sheetColumns
+    val sheetHeight = project.height.toLong() * sheetRows
+    val scaledSheetWidth = sheetWidth * safeScale
+    val scaledSheetHeight = sheetHeight * safeScale
+    val sheetExportSafe =
+        scaledSheetWidth <= PixelEngine.MAX_EXPORT_DIMENSION &&
+            scaledSheetHeight <= PixelEngine.MAX_EXPORT_DIMENSION &&
+            scaledSheetWidth * scaledSheetHeight <= PixelEngine.MAX_EXPORT_PIXELS
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Export", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("PNG scale: ${scale}× (nearest-neighbor; stays crisp)")
-        Slider(scale.toFloat(), { scale = it.roundToInt() }, valueRange = 1f..16f, steps = 14)
+        Text("PNG scale: ${safeScale}× (nearest-neighbor; stays crisp)")
+        if (maximumFrameScale > 1) {
+            Slider(safeScale.toFloat(), { scale = it.roundToInt() }, valueRange = 1f..maximumFrameScale.toFloat(), steps = (maximumFrameScale - 2).coerceAtLeast(0))
+        } else {
+            Text("This canvas is already at the safe export-size limit.", style = MaterialTheme.typography.bodySmall)
+        }
         Button(
             onClick = {
                 val active = frames[project.activeFrame]
-                val output = if (scale == 1) active else PixelEngine.resize(active, active.width * scale, active.height * scale, PixelResizeMode.NEAREST)
+                val output = PixelEngine.scaleForExport(active, safeScale)
                 onExport(output, "${project.safeName()}-frame-${project.activeFrame + 1}.png")
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Export active frame PNG") }
         Text("Sprite-sheet columns: $columns")
-        Slider(columns.toFloat(), { columns = it.roundToInt() }, valueRange = 1f..project.frames.size.coerceAtLeast(1).toFloat(), steps = (project.frames.size - 2).coerceAtLeast(0))
+        if (project.frames.size > 1) {
+            Slider(columns.toFloat(), { columns = it.roundToInt() }, valueRange = 1f..project.frames.size.toFloat(), steps = (project.frames.size - 2).coerceAtLeast(0))
+        }
         Button(
             onClick = {
                 var sheet = PixelEngine.spriteSheet(frames, columns)
-                if (scale > 1) sheet = PixelEngine.resize(sheet, sheet.width * scale, sheet.height * scale, PixelResizeMode.NEAREST)
+                if (safeScale > 1) sheet = PixelEngine.scaleForExport(sheet, safeScale)
                 onExport(sheet, "${project.safeName()}-sheet.png")
             },
             modifier = Modifier.fillMaxWidth(),
+            enabled = sheetExportSafe,
         ) { Text("Export sprite sheet PNG") }
+        if (!sheetExportSafe) {
+            Text(
+                "This sheet would be ${scaledSheetWidth}×${scaledSheetHeight}, which is too large to export safely. Lower the PNG scale or split the animation into smaller projects.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         OutlinedButton(onClick = { onExportProject(project) }, modifier = Modifier.fillMaxWidth()) { Text("Export editable project") }
         Text("The project remains editable and is autosaved internally. PNG exports preserve transparency.", style = MaterialTheme.typography.bodySmall)
     }
@@ -1027,7 +1069,11 @@ private class AndroidPixelProjectStore(private val directory: File) {
         require(project.frames.all { frame -> frame.layers.isNotEmpty() && frame.layers.all { it.pixels.size == project.width * project.height } }) {
             "Pixel Studio project contains invalid layer dimensions."
         }
-        return project
+        val activeFrame = project.activeFrame.coerceIn(project.frames.indices)
+        return project.copy(
+            activeFrame = activeFrame,
+            activeLayer = project.activeLayer.coerceIn(project.frames[activeFrame].layers.indices),
+        )
     }
 
     fun delete(id: String) {

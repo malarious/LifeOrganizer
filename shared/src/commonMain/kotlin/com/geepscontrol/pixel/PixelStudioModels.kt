@@ -9,6 +9,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 @Serializable
 enum class PixelResizeMode { SMART, NEAREST, AREA, BILINEAR }
@@ -57,6 +58,9 @@ data class PixelBitmap(
 }
 
 object PixelEngine {
+    const val MAX_EXPORT_PIXELS = 16_777_216
+    const val MAX_EXPORT_DIMENSION = 8_192
+
     fun flatten(frame: PixelFrame, width: Int, height: Int): PixelBitmap {
         val output = IntArray(width * height)
         frame.layers.filter { it.visible }.forEach { layer ->
@@ -80,12 +84,26 @@ object PixelEngine {
         val height = targetHeight.coerceIn(1, 512)
         if (source.width == width && source.height == height) return source.copy(pixels = source.pixels.copyOf())
         if (fit == PixelFitMode.STRETCH) return resizeStretched(source, width, height, selectMode(source, width, height, mode))
-        val scale =
-            if (fit == PixelFitMode.CONTAIN) {
-                min(width.toDouble() / source.width, height.toDouble() / source.height)
-            } else {
-                max(width.toDouble() / source.width, height.toDouble() / source.height)
+        if (fit == PixelFitMode.COVER) {
+            val sourceAspect = source.width.toDouble() / source.height
+            val targetAspect = width.toDouble() / height
+            val cropWidth = if (sourceAspect > targetAspect) max(1, (source.height * targetAspect).roundToInt()) else source.width
+            val cropHeight = if (sourceAspect > targetAspect) source.height else max(1, (source.width / targetAspect).roundToInt())
+            val startX = (source.width - cropWidth) / 2
+            val startY = (source.height - cropHeight) / 2
+            val croppedPixels = IntArray(cropWidth * cropHeight)
+            repeat(cropHeight) { y ->
+                source.pixels.copyInto(
+                    destination = croppedPixels,
+                    destinationOffset = y * cropWidth,
+                    startIndex = (startY + y) * source.width + startX,
+                    endIndex = (startY + y) * source.width + startX + cropWidth,
+                )
             }
+            val cropped = PixelBitmap(cropWidth, cropHeight, croppedPixels)
+            return resizeStretched(cropped, width, height, selectMode(cropped, width, height, mode))
+        }
+        val scale = min(width.toDouble() / source.width, height.toDouble() / source.height)
         val scaledWidth = max(1, (source.width * scale).roundToInt())
         val scaledHeight = max(1, (source.height * scale).roundToInt())
         val scaled = resizeStretched(source, scaledWidth, scaledHeight, selectMode(source, scaledWidth, scaledHeight, mode))
@@ -274,7 +292,10 @@ object PixelEngine {
                 }
             }
         }
-        return PixelBitmap(width, height, output)
+        val rotated = PixelBitmap(width, height, output)
+        if (width <= 512 && height <= 512) return rotated
+        val resizeScale = min(512.0 / width, 512.0 / height)
+        return resizeStretched(rotated, max(1, (width * resizeScale).roundToInt()), max(1, (height * resizeScale).roundToInt()), PixelResizeMode.NEAREST)
     }
 
     fun flip(source: PixelBitmap, horizontal: Boolean): PixelBitmap {
@@ -341,17 +362,35 @@ object PixelEngine {
         val frameHeight = frames.maxOf { it.height }
         val columnCount = columns.coerceIn(1, frames.size)
         val rows = ceil(frames.size.toDouble() / columnCount).toInt()
-        val output = IntArray(frameWidth * columnCount * frameHeight * rows)
+        val outputWidth = frameWidth.toLong() * columnCount
+        val outputHeight = frameHeight.toLong() * rows
+        require(outputWidth <= MAX_EXPORT_DIMENSION && outputHeight <= MAX_EXPORT_DIMENSION && outputWidth * outputHeight <= MAX_EXPORT_PIXELS) {
+            "Sprite sheet is too large to export safely"
+        }
+        val output = IntArray((outputWidth * outputHeight).toInt())
         frames.forEachIndexed { index, frame ->
             val startX = (index % columnCount) * frameWidth
             val startY = (index / columnCount) * frameHeight
             repeat(frame.height) { y ->
                 repeat(frame.width) { x ->
-                    output[(startY + y) * frameWidth * columnCount + startX + x] = frame.pixels[y * frame.width + x]
+                    output[(startY + y) * outputWidth.toInt() + startX + x] = frame.pixels[y * frame.width + x]
                 }
             }
         }
-        return PixelBitmap(frameWidth * columnCount, frameHeight * rows, output)
+        return PixelBitmap(outputWidth.toInt(), outputHeight.toInt(), output)
+    }
+
+    fun maximumExportScale(width: Int, height: Int): Int {
+        require(width > 0 && height > 0)
+        val dimensionScale = min(MAX_EXPORT_DIMENSION / width, MAX_EXPORT_DIMENSION / height)
+        val pixelScale = floor(sqrt(MAX_EXPORT_PIXELS.toDouble() / (width.toLong() * height).toDouble())).toInt()
+        return min(16, min(dimensionScale, pixelScale)).coerceAtLeast(1)
+    }
+
+    fun scaleForExport(source: PixelBitmap, scale: Int): PixelBitmap {
+        val factor = scale.coerceAtLeast(1)
+        require(factor <= maximumExportScale(source.width, source.height)) { "Export scale is too large for this image" }
+        return if (factor == 1) source.copy(pixels = source.pixels.copyOf()) else nearestResize(source, source.width * factor, source.height * factor)
     }
 
     private fun selectMode(source: PixelBitmap, width: Int, height: Int, requested: PixelResizeMode): PixelResizeMode {

@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class PixelEngineTest {
@@ -179,6 +180,41 @@ class PixelEngineTest {
 
         assertEquals(project.copy(frames = emptyList()), decoded.copy(frames = emptyList()))
         assertContentEquals(project.frames.single().layers.single().pixels, decoded.frames.single().layers.single().pixels)
+    }
+
+    @Test
+    fun `cover resize handles extreme panoramas without oversized intermediates`() {
+        val source = PixelBitmap(1024, 1, IntArray(1024) { if (it == 511) RED else BLUE })
+
+        val result = PixelEngine.resize(source, 512, 512, PixelResizeMode.SMART, PixelFitMode.COVER)
+
+        assertEquals(512, result.width)
+        assertEquals(512, result.height)
+        assertTrue(result.pixels.all { it == RED })
+    }
+
+    @Test
+    fun `expanded rotation remains within editable canvas limit`() {
+        val source = PixelBitmap(512, 512, IntArray(512 * 512) { RED })
+
+        val result = PixelEngine.rotate(source, 45f, expand = true)
+
+        assertTrue(result.width <= 512)
+        assertTrue(result.height <= 512)
+    }
+
+    @Test
+    fun `export scaling stays crisp and oversized sheets are rejected`() {
+        val source = PixelBitmap(2, 1, intArrayOf(RED, BLUE))
+
+        val scaled = PixelEngine.scaleForExport(source, 2)
+
+        assertEquals(4, scaled.width)
+        assertEquals(2, scaled.height)
+        assertContentEquals(intArrayOf(RED, RED, BLUE, BLUE, RED, RED, BLUE, BLUE), scaled.pixels)
+        assertFailsWith<IllegalArgumentException> {
+            PixelEngine.spriteSheet(List(65) { PixelBitmap(512, 512, IntArray(512 * 512)) }, columns = 65)
+        }
     }
 
     private companion object {
