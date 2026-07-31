@@ -2,6 +2,8 @@ package com.geepscontrol.core.data
 
 import com.geepscontrol.core.database.ItineraryEntryEntity
 import com.geepscontrol.core.database.AlarmProfileEntity
+import com.geepscontrol.core.database.ChecklistEntity
+import com.geepscontrol.core.database.ChecklistItemEntity
 import com.geepscontrol.core.database.LifeEventEntity
 import com.geepscontrol.core.database.LodgingDetailsEntity
 import com.geepscontrol.core.database.MedicationEntity
@@ -47,7 +49,7 @@ import kotlinx.serialization.json.Json
 @Serializable
 data class ExportBundle(
     val format: String = "life-minder",
-    val version: Int = 4,
+    val version: Int = 5,
     val exportedAt: Long,
     val projects: List<ProjectDto>,
     val tasks: List<TaskDto>,
@@ -73,6 +75,8 @@ data class ExportBundle(
     val lodgingDetails: List<LodgingDetailsEntity> = emptyList(),
     val tripReferences: List<TripReferenceEntity> = emptyList(),
     val tripTasks: List<TripTaskEntity> = emptyList(),
+    val checklists: List<ChecklistEntity> = emptyList(),
+    val checklistItems: List<ChecklistItemEntity> = emptyList(),
 )
 
 @Serializable data class ProjectDto(
@@ -166,7 +170,7 @@ data class ImportResult(
 @Serializable
 data class TripPackage(
     val format: String = "life-minder-trip",
-    val version: Int = 1,
+    val version: Int = 2,
     val exportedAt: Long,
     val trip: TripEntity,
     val entries: List<ItineraryEntryEntity>,
@@ -174,6 +178,8 @@ data class TripPackage(
     val lodging: List<LodgingDetailsEntity>,
     val references: List<TripReferenceEntity>,
     val associatedTaskIds: List<Long>,
+    val checklists: List<ChecklistEntity> = emptyList(),
+    val checklistItems: List<ChecklistItemEntity> = emptyList(),
 )
 
 interface DataFileGateway {
@@ -216,6 +222,8 @@ class DataPortabilityService(
         val trip = repository.trips().first().firstOrNull { it.id == tripId } ?: error("Trip not found")
         val entries = repository.itineraryEntries().first().filter { it.tripId == tripId }
         val entryIds = entries.mapTo(mutableSetOf()) { it.id }
+        val tripChecklists = repository.checklists().first().filter { it.tripId == tripId }
+        val tripChecklistIds = tripChecklists.mapTo(mutableSetOf()) { it.id }
         return json.encodeToString(
             TripPackage(
                 exportedAt = now,
@@ -240,6 +248,8 @@ class DataPortabilityService(
                         .first()
                         .filter { it.tripId == tripId }
                         .map { it.taskId },
+                checklists = tripChecklists.map { it.copy(sourceChecklistId = null) },
+                checklistItems = repository.checklistItems().first().filter { it.checklistId in tripChecklistIds },
             ),
         )
     }
@@ -247,10 +257,14 @@ class DataPortabilityService(
     suspend fun importTripAsNew(content: String): Long {
         val repository = requireNotNull(life) { "Trip storage is unavailable" }
         val value = json.decodeFromString<TripPackage>(content)
-        require(value.format == "life-minder-trip" && value.version == 1 && value.trip.name.isNotBlank()) { "Unsupported Life Minder trip package" }
+        require(value.format == "life-minder-trip" && value.version in 1..2 && value.trip.name.isNotBlank()) { "Unsupported Life Minder trip package" }
         require(value.entries.all { it.tripId == value.trip.id }) { "Trip package contains an unrelated entry" }
         val oldEntryIds = value.entries.mapTo(mutableSetOf()) { it.id }
         require(value.transportation.all { it.itineraryEntryId in oldEntryIds } && value.lodging.all { it.itineraryEntryId in oldEntryIds } && value.references.all { it.tripId == value.trip.id }) { "Trip package contains a missing relationship" }
+        val oldChecklistIds = value.checklists.mapTo(mutableSetOf()) { it.id }
+        require(value.checklists.all { it.tripId == value.trip.id } && value.checklistItems.all { it.checklistId in oldChecklistIds }) {
+            "Trip package contains an unrelated checklist"
+        }
         val tripId = repository.save(value.trip.copy(id = 0, name = "${value.trip.name} (imported)"))
         val entryMap = mutableMapOf<Long, Long>()
         value.entries.forEach { entry -> entryMap[entry.id] = repository.save(entry.copy(id = 0, tripId = tripId)) }
@@ -258,6 +272,13 @@ class DataPortabilityService(
         value.lodging.forEach { row -> entryMap[row.itineraryEntryId]?.let { repository.save(row.copy(itineraryEntryId = it)) } }
         value.references.forEach { repository.save(it.copy(id = 0, tripId = tripId)) }
         value.associatedTaskIds.forEach { taskId -> if (tasks.get(taskId) != null) repository.save(TripTaskEntity(tripId, taskId)) }
+        val checklistMap = mutableMapOf<Long, Long>()
+        value.checklists.forEach { row ->
+            checklistMap[row.id] = repository.save(row.copy(id = 0, tripId = tripId, sourceChecklistId = null))
+        }
+        value.checklistItems.forEach { row ->
+            checklistMap[row.checklistId]?.let { repository.save(row.copy(id = 0, checklistId = it)) }
+        }
         return tripId
     }
 
@@ -303,6 +324,8 @@ class DataPortabilityService(
                         .orEmpty()
                         .map { if (fullBackup || !it.sensitive) it else it.copy(content = "") },
                 tripTasks = portableLife?.tripTasks()?.first().orEmpty(),
+                checklists = portableLife?.checklists()?.first().orEmpty(),
+                checklistItems = portableLife?.checklistItems()?.first().orEmpty(),
             )
         return json.encodeToString(bundle)
     }
@@ -349,6 +372,25 @@ class DataPortabilityService(
             bundle.lodgingDetails.forEach { row -> entryMap[row.itineraryEntryId]?.let { repo.save(row.copy(itineraryEntryId = it)) } }
             bundle.tripReferences.forEach { row -> tripMap[row.tripId]?.let { repo.save(row.copy(id = 0, tripId = it)) } }
             bundle.tripTasks.forEach { row -> tripMap[row.tripId]?.let { trip -> taskMap[row.taskId]?.let { task -> repo.save(TripTaskEntity(trip, task)) } } }
+            val checklistMap = mutableMapOf<Long, Long>()
+            bundle.checklists.filter { it.tripId == null }.forEach { row ->
+                checklistMap[row.id] = repo.save(row.copy(id = 0, tripId = null, sourceChecklistId = null))
+            }
+            bundle.checklists.filter { it.tripId != null }.forEach { row ->
+                row.tripId?.let(tripMap::get)?.let { tripId ->
+                    checklistMap[row.id] =
+                        repo.save(
+                            row.copy(
+                                id = 0,
+                                tripId = tripId,
+                                sourceChecklistId = row.sourceChecklistId?.let(checklistMap::get),
+                            ),
+                        )
+                }
+            }
+            bundle.checklistItems.forEach { row ->
+                checklistMap[row.checklistId]?.let { repo.save(row.copy(id = 0, checklistId = it)) }
+            }
         }
         return ImportResult(bundle.projects.size, bundle.tasks.size, bundle.sessions.size)
     }
@@ -367,7 +409,7 @@ fun decodeAndValidateExport(
     json: Json = Json { ignoreUnknownKeys = true },
 ): ExportBundle {
     val bundle = json.decodeFromString<ExportBundle>(content)
-    require(bundle.format == "life-minder" && bundle.version in 1..4) { "Unsupported Life Minder export" }
+    require(bundle.format == "life-minder" && bundle.version in 1..5) { "Unsupported Life Minder export" }
     require(bundle.projects.all { it.name.isNotBlank() } && bundle.tasks.all { it.title.isNotBlank() }) { "Export contains blank required names" }
     require(
         bundle.projects
@@ -396,6 +438,9 @@ fun decodeAndValidateExport(
     require(bundle.itineraryEntries.all { it.tripId in tripIds } && bundle.tripReferences.all { it.tripId in tripIds } && bundle.tripTasks.all { it.tripId in tripIds && it.taskId in taskIds }) { "Trip data contains a missing relationship" }
     val entryIds = bundle.itineraryEntries.mapTo(mutableSetOf()) { it.id }
     require(bundle.transportationDetails.all { it.itineraryEntryId in entryIds } && bundle.lodgingDetails.all { it.itineraryEntryId in entryIds }) { "Itinerary details reference a missing entry" }
+    val checklistIds = bundle.checklists.mapTo(mutableSetOf()) { it.id }
+    require(bundle.checklists.all { (it.tripId == null || it.tripId in tripIds) && (it.sourceChecklistId == null || it.sourceChecklistId in checklistIds) }) { "Checklist references a missing trip or template" }
+    require(bundle.checklistItems.all { it.checklistId in checklistIds }) { "Checklist item references a missing checklist" }
     require(
         bundle.contexts
             .map { it.name.lowercase() }

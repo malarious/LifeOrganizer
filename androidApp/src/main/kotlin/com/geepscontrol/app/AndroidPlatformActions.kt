@@ -20,6 +20,40 @@ class AndroidPlatformActions(
     private val context: Context,
 ) : PlatformActions {
     private var previewPlayer: MediaPlayer? = null
+    override fun currentTimezoneId(): String = java.util.TimeZone.getDefault().id
+
+    override fun localMinutesOfDay(epochMillis: Long): Int =
+        java.time.Instant
+            .ofEpochMilli(epochMillis)
+            .atZone(java.time.ZoneId.systemDefault())
+            .let { it.hour * 60 + it.minute }
+
+    override fun localDateEpochMillis(epochMillis: Long): Long =
+        java.time.Instant
+            .ofEpochMilli(epochMillis)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+            .atStartOfDay(java.time.ZoneOffset.UTC)
+            .toInstant()
+            .toEpochMilli()
+
+    override fun localDateTimeToEpoch(
+        dateEpochMillis: Long,
+        hour: Int,
+        minute: Int,
+    ): Long {
+        val date =
+            java.time.Instant
+                .ofEpochMilli(dateEpochMillis)
+                .atZone(java.time.ZoneOffset.UTC)
+                .toLocalDate()
+        return date
+            .atTime(hour.coerceIn(0, 23), minute.coerceIn(0, 59))
+            .atZone(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+    }
+
     override fun openMap(address: String) = open(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(address)}")))
 
     override fun openWebsite(url: String) = open(Intent(Intent.ACTION_VIEW, Uri.parse(if (url.startsWith("http")) url else "https://$url")))

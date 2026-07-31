@@ -40,7 +40,13 @@ class AndroidAlarmScheduler(
     override fun schedule(alarm: AlarmDefinition) {
         val operation = pending(context, AlarmReceiver.ACTION_FIRE, alarm.id)
         if (Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()) {
-            manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.triggerAt, operation)
+            val showAlarm = PendingIntent.getActivity(
+                context,
+                (alarm.id % Int.MAX_VALUE).toInt(),
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            manager.setAlarmClock(AlarmManager.AlarmClockInfo(alarm.triggerAt, showAlarm), operation)
         } else {
             manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.triggerAt, operation)
         }
@@ -69,6 +75,7 @@ class AndroidAlarmScheduler(
         val id = timerId ?: TIMER_ID
         manager.cancel(pending(context, AlarmReceiver.ACTION_TIMER_COMPLETE, id))
         NotificationManagerCompat.from(context).cancel((TIMER_NOTIFICATION_ID + id % 10_000).toInt())
+        NotificationManagerCompat.from(context).cancel(id.toInt())
     }
 
     override fun scheduleReminder(
@@ -113,10 +120,15 @@ class AlarmReceiver : BroadcastReceiver() {
                         val profile = standalone?.profileId?.let { lifeRepository.getAlarmProfile(it) }
                         val alarm = repository.getAlarm(id)?.takeIf { it.enabled } ?: standalone?.let { AlarmDefinition(id = id, triggerAt = it.scheduledAt, label = it.label, vibration = it.vibration, sound = it.sound) }
                         alarm?.let { showAlarmScreen(context, it.id, it.label, sound = it.sound, vibration = it.vibration, soundId = standalone?.soundId ?: profile?.soundId, profileName = profile?.name, loopSound = standalone?.loopSound ?: profile?.loopSound ?: true, vibrationMode = standalone?.vibrationMode ?: profile?.vibrationMode ?: "STANDARD", vibrationDelaySeconds = standalone?.vibrationStartDelaySeconds ?: profile?.vibrationStartDelaySeconds ?: 0, startingVolumePercent = standalone?.startingVolumePercent ?: profile?.startingVolumePercent ?: 100, maximumVolumePercent = standalone?.maximumVolumePercent ?: profile?.maximumVolumePercent ?: 100, volumeRampSeconds = standalone?.volumeRampSeconds ?: profile?.volumeRampSeconds ?: 0, dismissalMethod = standalone?.dismissalMethod ?: profile?.dismissalMethod ?: "STANDARD", dismissalDifficulty = standalone?.dismissalDifficulty ?: profile?.dismissalDifficulty ?: "NORMAL", snoozeAvailable = com.geepscontrol.core.domain.AlarmExperience.canSnooze(standalone?.snoozeCount ?: 0, standalone?.maximumSnoozes ?: profile?.maximumSnoozes ?: 0)) }
-                        standalone?.takeIf { it.recurrenceRule != null }?.let { value ->
-                            val next = AlarmRepeatRule.decode(value.recurrenceRule)?.let { AlarmRepeatEngine.nextFuture(it, value.scheduledAt, System.currentTimeMillis()) } ?: value.scheduledAt + 86_400_000L
-                            lifeRepository.save(value.copy(scheduledAt = next, localEpochDay = java.time.Instant.ofEpochMilli(next).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay(), lastTriggeredAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis()))
-                            AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = next, label = value.label, vibration = value.vibration, sound = value.sound))
+                        standalone?.let { value ->
+                            val firedAt = System.currentTimeMillis()
+                            if (value.recurrenceRule != null) {
+                                val next = AlarmRepeatRule.decode(value.recurrenceRule)?.let { AlarmRepeatEngine.nextFuture(it, value.scheduledAt, firedAt) } ?: value.scheduledAt + 86_400_000L
+                                lifeRepository.save(value.copy(scheduledAt = next, localEpochDay = java.time.Instant.ofEpochMilli(next).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay(), lastTriggeredAt = firedAt, updatedAt = firedAt))
+                                AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = next, label = value.label, vibration = value.vibration, sound = value.sound))
+                            } else {
+                                lifeRepository.save(value.copy(lastTriggeredAt = firedAt, updatedAt = firedAt))
+                            }
                         }
                     }
                     ACTION_SNOOZE ->
@@ -146,7 +158,8 @@ class AlarmReceiver : BroadcastReceiver() {
                         if (id >= STANDALONE_ALARM_OFFSET) {
                             val alarm = lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)
                             if (alarm?.recurrenceRule == null) {
-                                lifeRepository.setAlarmEnabled(id - STANDALONE_ALARM_OFFSET, false, System.currentTimeMillis())
+                                val now = System.currentTimeMillis()
+                                alarm?.let { lifeRepository.save(it.copy(enabled = false, lastDismissedAt = now, updatedAt = now)) }
                                 AndroidAlarmScheduler(context).cancel(id)
                             } else {
                                 val now = System.currentTimeMillis()
@@ -251,7 +264,7 @@ class AlarmReceiver : BroadcastReceiver() {
         dismissalDifficulty: String = "NORMAL",
         snoozeAvailable: Boolean = true,
     ) {
-        context.startActivity(
+        val alarmIntent =
             Intent(context, AlarmActivity::class.java)
                 .putExtra(EXTRA_ID, id)
                 .putExtra(EXTRA_LABEL, label)
@@ -269,8 +282,39 @@ class AlarmReceiver : BroadcastReceiver() {
                 .putExtra(EXTRA_DISMISSAL_METHOD, dismissalMethod)
                 .putExtra(EXTRA_DISMISSAL_DIFFICULTY, dismissalDifficulty)
                 .putExtra(EXTRA_SNOOZE_AVAILABLE, snoozeAvailable)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        createChannels(context)
+        val screen = PendingIntent.getActivity(
+            context,
+            (id % Int.MAX_VALUE).toInt(),
+            alarmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val dismissAction = if (isTimer) ACTION_TIMER_DISMISS else ACTION_DISMISS
+        val notification =
+            NotificationCompat.Builder(context, if (isTimer) CHANNEL_TIMERS else CHANNEL_ALARMS)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(if (isTimer) "Timer complete" else "Life Minder alarm")
+                .setContentText(label)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setContentIntent(screen)
+                .setFullScreenIntent(screen, true)
+                .apply {
+                    if (!isTimer && snoozeAvailable) addAction(0, "Snooze", pending(context, ACTION_SNOOZE, id))
+                    addAction(0, "Acknowledge", pending(context, dismissAction, id))
+                }
+                .build()
+        if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            NotificationManagerCompat.from(context).notify(id.toInt(), notification)
+        } else {
+            // Full-screen alarm notifications require notification permission on Android 13+.
+            // Preserve the direct launch as a best-effort fallback when that permission was denied.
+            runCatching { context.startActivity(alarmIntent) }
+        }
     }
 
     private fun showReminder(

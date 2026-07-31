@@ -124,6 +124,26 @@ class DatabaseIntegrationTest {
         }
 
     @Test
+    fun migratesReusableChecklistDataFromVersionThirteen() =
+        runBlocking {
+            migrationHelper.createDatabase(TEST_DATABASE, 13).apply {
+                execSQL("INSERT INTO checklists (id, name, createdAt, updatedAt) VALUES (11, 'Packing', 1, 1)")
+                execSQL("INSERT INTO checklist_items (id, checklistId, text, checked, sortOrder, createdAt, updatedAt) VALUES (21, 11, 'Passport', 1, 0, 1, 1)")
+                close()
+            }
+
+            database = buildDatabase(context, TEST_DATABASE)
+
+            val checklist = database!!.lifeItemDao().observeChecklists().first().single()
+            val item = database!!.lifeItemDao().observeChecklistItems().first().single()
+            assertEquals("Packing", checklist.name)
+            assertEquals(null, checklist.tripId)
+            assertEquals(null, checklist.sourceChecklistId)
+            assertEquals("Passport", item.text)
+            assertTrue(item.checked)
+        }
+
+    @Test
     fun repositoriesPersistRelationshipsAndBlockedState() =
         runBlocking {
             database = buildDatabase(context, TEST_DATABASE)

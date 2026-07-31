@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +31,9 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -46,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -57,10 +62,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -69,6 +77,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.WbSunny
 import com.geepscontrol.core.data.DataFileGateway
 import com.geepscontrol.core.data.DataPortabilityService
 import com.geepscontrol.core.database.ItineraryEntryEntity
@@ -169,6 +184,7 @@ fun LifeMinderApp(
     var medicationBeingViewedId by remember { mutableStateOf<Long?>(null) }
     var medicationBeingEdited by remember { mutableStateOf<MedicationEntity?>(null) }
     var lifeItemBeingViewed by remember { mutableStateOf<TimelineItem?>(null) }
+    var lifeItemEditSourceId by remember { mutableStateOf<Long?>(null) }
     var projectBeingEdited by remember { mutableStateOf<Project?>(null) }
     var selectedProject by remember { mutableStateOf<Project?>(null) }
     var selectedTripId by remember { mutableStateOf<Long?>(null) }
@@ -194,6 +210,8 @@ fun LifeMinderApp(
     val contexts by contextRepository.observeContexts().collectAsState(emptyList())
     val tags by tagRepository.observeTags().collectAsState(emptyList())
     val now = currentTimeMillis()
+    val localDateMarker = platformActions.localDateEpochMillis(now)
+    val localDayStart = platformActions.localDateTimeToEpoch(localDateMarker, 0, 0)
     var selectedCalendarIds by remember { mutableStateOf(appSettings.selectedCalendarIds) }
     var calendarPrivacyMode by remember { mutableStateOf(appSettings.calendarPrivacyMode) }
     var calendarRefreshRequest by remember { mutableIntStateOf(0) }
@@ -204,7 +222,7 @@ fun LifeMinderApp(
     val deviceCalendars = remember(rawDeviceCalendars, calendarPrivacyMode) {
         if (calendarPrivacyMode) rawDeviceCalendars.map { it.copy(name = CALENDAR_NAME_RECORDING_PLACEHOLDER) } else rawDeviceCalendars
     }
-    val deviceCalendarEvents = remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest, now / 60_000L) { platformActions.deviceCalendarEvents(dayKey(now) * DAY_MILLIS, dayKey(now) * DAY_MILLIS + 31 * DAY_MILLIS, selectedCalendarIds) }
+    val deviceCalendarEvents = remember(destination, selectedCalendarIds, calendarPermissionRevision, calendarRefreshRequest, now / 60_000L) { platformActions.deviceCalendarEvents(localDayStart, platformActions.localDateTimeToEpoch(localDateMarker + 31 * DAY_MILLIS, 0, 0), selectedCalendarIds) }
     val deviceCalendarNames = deviceCalendars.associate { it.id to it.name }
     val deviceCalendarTimeline =
         deviceCalendarEvents.map { event ->
@@ -221,7 +239,7 @@ fun LifeMinderApp(
                 sourceId = event.calendarId,
             )
         }
-    val todayKey = dayKey(now)
+    val todayKey = platformActions.localEpochDay(now)
     val dailyPlan by planningRepository.observeDay(todayKey).collectAsState(emptyList())
     val activeTimer by timerRepository.observeActive().collectAsState(null)
     var stopwatchLaps by remember(activeTimer?.startedAt) { mutableStateOf(emptyList<Long>()) }
@@ -249,7 +267,7 @@ fun LifeMinderApp(
     val tripTasks by lifeItemRepository.tripTasks().collectAsState(emptyList())
     val transportationDetails by lifeItemRepository.transportationDetails().collectAsState(emptyList())
     val lodgingDetails by lifeItemRepository.lodgingDetails().collectAsState(emptyList())
-    val reviewDayStart = dayKey(now) * DAY_MILLIS
+    val reviewDayStart = localDayStart
     val reviewWeekStart = reviewDayStart - 6 * DAY_MILLIS
     val weeklyDeferrals by planningRepository.observeDeferralCount(reviewWeekStart, reviewDayStart + DAY_MILLIS).collectAsState(0)
     val snackbar = remember { SnackbarHostState() }
@@ -259,8 +277,8 @@ fun LifeMinderApp(
             selectedCalendarEvent != null || showPlanTypeDialog || showQuickAdd || showNewListDialog ||
             selectedChecklistId != null || showTripAddDialog || showTimerAddDialog || showTopMenu ||
             taskBeingViewed != null || medicationBeingViewedId != null || lifeItemBeingViewed != null ||
-            selectedProject != null || selectedTripId != null || destination != AppDestination.TODAY
-    SystemBackHandler(enabled = handlesSystemBack) {
+            lifeItemsShowAdd || selectedProject != null || selectedTripId != null || destination != AppDestination.TODAY
+    val navigateBack: () -> Unit = {
         when {
             taskBeingEdited != null -> {
                 taskBeingEdited = null
@@ -279,13 +297,18 @@ fun LifeMinderApp(
             taskBeingViewed != null -> taskBeingViewed = null
             medicationBeingViewedId != null -> medicationBeingViewedId = null
             lifeItemBeingViewed != null -> lifeItemBeingViewed = null
+            lifeItemsShowAdd -> {
+                lifeItemsShowAdd = false
+                lifeItemEditSourceId = null
+            }
             selectedProject != null -> selectedProject = null
             selectedTripId != null -> selectedTripId = null
             destination != AppDestination.TODAY -> destination = AppDestination.TODAY
         }
     }
+    SystemBackHandler(enabled = handlesSystemBack, onBack = navigateBack)
     LaunchedEffect(todayKey) {
-        lifeItemRepository.removeHistoryBefore(todayKey * DAY_MILLIS)
+        lifeItemRepository.removeHistoryBefore(localDayStart)
     }
     LaunchedEffect(standaloneTimers) {
         standaloneTimers.filter { it.state == "COMPLETED" }.forEach { lifeItemRepository.removeTimer(it.id) }
@@ -302,18 +325,22 @@ fun LifeMinderApp(
     }
     LaunchedEffect(routines, medications, routineOccurrences, medicationOccurrences) {
         val generatedAt = currentTimeMillis()
-        val dayStart = dayKey(generatedAt) * DAY_MILLIS
-        routines.filter { it.active && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { routine ->
-            if (routineOccurrences.none { it.routineId == routine.id && it.scheduledAt in dayStart until dayStart + DAY_MILLIS }) lifeItemRepository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = dayStart + (routine.preferredTimeMinutes ?: 9 * 60) * 60_000L, createdAt = generatedAt, updatedAt = generatedAt))
+        val dateMarker = platformActions.localDateEpochMillis(generatedAt)
+        val dayStart = platformActions.localDateTimeToEpoch(dateMarker, 0, 0)
+        val dayEnd = platformActions.localDateTimeToEpoch(dateMarker + DAY_MILLIS, 0, 0)
+        routines.filter { it.active && it.startDate <= dateMarker && (it.endDate == null || it.endDate >= dateMarker) }.forEach { routine ->
+            val preferredMinutes = routine.preferredTimeMinutes ?: 9 * 60
+            val scheduledAt = platformActions.localDateTimeToEpoch(dateMarker, preferredMinutes / 60, preferredMinutes % 60)
+            if (routineOccurrences.none { it.routineId == routine.id && it.scheduledAt in dayStart until dayEnd }) lifeItemRepository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = scheduledAt, createdAt = generatedAt, updatedAt = generatedAt))
         }
-        medications.filter { it.active && !it.asNeeded && (it.scheduleType != "ONCE" || it.recurrenceRule != null) && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
+        medications.filter { it.active && !it.asNeeded && (it.scheduleType != "ONCE" || it.recurrenceRule != null) && it.startDate <= dateMarker && (it.endDate == null || it.endDate >= dateMarker) }.forEach { medication ->
             val minutes =
                 medication.timesOfDay
                     .split(',')
                     .mapNotNull { it.trim().toIntOrNull() }
                     .ifEmpty { listOf(9 * 60) }
-            com.geepscontrol.core.domain.LifeScheduleEngine
-                .medicationTimes(dayStart, minutes)
+            minutes
+                .map { platformActions.localDateTimeToEpoch(dateMarker, it / 60, it % 60) }
                 .forEach { scheduled -> if (medicationOccurrences.none { it.medicationId == medication.id && it.scheduledAt == scheduled }) lifeItemRepository.save(MedicationOccurrenceEntity(medicationId = medication.id, scheduledAt = scheduled, createdAt = generatedAt, updatedAt = generatedAt)) }
         }
     }
@@ -408,6 +435,13 @@ fun LifeMinderApp(
             topBar = {
                 TopAppBar(
                     title = { Text(medicationBeingViewed?.name ?: lifeItemBeingViewed?.title ?: taskBeingViewed?.title ?: selectedProject?.name ?: "Life Minder — ${destination.title}", maxLines = 1) },
+                    navigationIcon = {
+                        if (handlesSystemBack) {
+                            IconButton(onClick = navigateBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = selectedProject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.surface),
                     actions = {
                         Box {
@@ -428,7 +462,10 @@ fun LifeMinderApp(
                                             taskBeingViewed = null
                                             medicationBeingViewedId = null
                                             lifeItemBeingViewed = null
-                                            if (item == AppDestination.LIFE_ITEMS) lifeItemsShowAdd = false
+                                            if (item == AppDestination.LIFE_ITEMS) {
+                                                lifeItemQuickType = "Reminder"
+                                                lifeItemsShowAdd = false
+                                            }
                                             showTopMenu = false
                                         },
                                     )
@@ -448,9 +485,10 @@ fun LifeMinderApp(
                 }
             },
             bottomBar = {
-                NavigationBar {
-                    AppDestination.entries.filter { it.primary }.forEach { item ->
-                        NavigationBarItem(
+                if (taskBeingViewed == null && medicationBeingViewed == null && lifeItemBeingViewed == null && selectedProject == null) {
+                    NavigationBar {
+                        AppDestination.entries.filter { it.primary }.forEach { item ->
+                            NavigationBarItem(
                             selected = destination == item,
                             onClick = {
                                 destination = item
@@ -461,16 +499,28 @@ fun LifeMinderApp(
                             },
                             icon = {
                                 Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
-                                    Text(
-                                        item.symbol,
-                                        fontSize = when (item) { AppDestination.TIMERS -> 30.sp; AppDestination.DO_NOW -> 24.sp; else -> 22.sp },
-                                        lineHeight = 32.sp,
+                                    Icon(
+                                        imageVector =
+                                            when (item) {
+                                                AppDestination.TODAY -> Icons.Default.WbSunny
+                                                AppDestination.DO_NOW -> Icons.Default.PlayArrow
+                                                AppDestination.INBOX -> Icons.Default.CheckBoxOutlineBlank
+                                                AppDestination.PROJECTS -> Icons.Default.Dashboard
+                                                AppDestination.TIMERS -> Icons.Default.Timer
+                                                else -> Icons.Default.CheckBoxOutlineBlank
+                                            },
+                                        contentDescription = item.title,
+                                        modifier =
+                                            Modifier
+                                                .offset(y = if (item == AppDestination.TIMERS) (-3).dp else 0.dp)
+                                                .size(if (item == AppDestination.TIMERS) 27.dp else 24.dp),
                                     )
                                 }
                             },
                             label = { Text(item.title) },
                             colors = NavigationBarItemDefaults.colors(indicatorColor = selectedProject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.secondaryContainer),
-                        )
+                            )
+                        }
                     }
                 }
             },
@@ -480,7 +530,7 @@ fun LifeMinderApp(
                     MedicationDetailScreen(
                         medication = medicationBeingViewed,
                         occurrences = medicationOccurrences.filter { it.medicationId == medicationBeingViewed.id },
-                        onBack = { medicationBeingViewedId = null },
+                        platformActions = platformActions,
                         onEdit = { medicationBeingEdited = medicationBeingViewed },
                         onDone = {
                             medicationOccurrences
@@ -494,10 +544,14 @@ fun LifeMinderApp(
                         onDelete = {
                             medicationBeingViewed?.let { medication ->
                                 scope.launch {
+                                    val deletedOccurrences = medicationOccurrences.filter { it.medicationId == medication.id }
                                     alarmScheduler.cancelReminder(2_000_000 + medication.id)
-                                    medicationOccurrences.filter { it.medicationId == medication.id }.forEach { occurrence -> alarmScheduler.cancelReminder(2_000_000 + occurrence.id) }
+                                    deletedOccurrences.forEach { occurrence -> alarmScheduler.cancelReminder(2_000_000 + occurrence.id) }
                                     lifeItemRepository.removeMedication(medication.id)
-                                    snackbar.showSnackbar("Medication deleted")
+                                    if (snackbar.showSnackbar("Medication deleted", "Undo") == SnackbarResult.ActionPerformed) {
+                                        lifeItemRepository.save(medication)
+                                        deletedOccurrences.forEach { lifeItemRepository.save(it) }
+                                    }
                                 }
                             }
                             medicationBeingViewedId = null
@@ -507,7 +561,22 @@ fun LifeMinderApp(
                 lifeItemBeingViewed != null ->
                     TimelineItemDetailScreen(
                         timelineItem = lifeItemBeingViewed!!,
-                        onBack = { lifeItemBeingViewed = null },
+                        platformActions = platformActions,
+                        onEdit = {
+                            lifeItemBeingViewed?.let { item ->
+                                if (item.type == TimelineItemType.ITINERARY) {
+                                    selectedTripId = item.sourceId
+                                    lifeItemBeingViewed = null
+                                    destination = AppDestination.TRIPS
+                                } else {
+                                    lifeItemEditSourceId = item.sourceId
+                                    lifeItemQuickType = item.type.displayName()
+                                    lifeItemsShowAdd = true
+                                    lifeItemBeingViewed = null
+                                    destination = AppDestination.LIFE_ITEMS
+                                }
+                            }
+                        },
                         onDone = {
                             lifeItemBeingViewed?.let(completeTimelineItem)
                             lifeItemBeingViewed = null
@@ -515,6 +584,15 @@ fun LifeMinderApp(
                         onDelete = {
                             lifeItemBeingViewed?.let { item ->
                                 scope.launch {
+                                    val reminder = reminders.firstOrNull { it.id == item.sourceId }
+                                    val routine = routines.firstOrNull { it.id == item.sourceId }
+                                    val deletedRoutineOccurrences = routineOccurrences.filter { it.routineId == item.sourceId }
+                                    val event = events.firstOrNull { it.id == item.sourceId }
+                                    val alarm = lifeAlarms.firstOrNull { it.id == item.sourceId }
+                                    val timer = standaloneTimers.firstOrNull { it.id == item.sourceId }
+                                    val itineraryEntry = itinerary.firstOrNull { it.id == item.id }
+                                    val transportation = transportationDetails.firstOrNull { it.itineraryEntryId == item.id }
+                                    val lodging = lodgingDetails.firstOrNull { it.itineraryEntryId == item.id }
                                     when (item.type) {
                                         TimelineItemType.REMINDER -> {
                                             alarmScheduler.cancelReminder(1_000_000 + item.sourceId)
@@ -533,7 +611,27 @@ fun LifeMinderApp(
                                         TimelineItemType.ITINERARY -> lifeItemRepository.removeItineraryEntry(item.id)
                                         TimelineItemType.TASK, TimelineItemType.MEDICATION -> Unit
                                     }
-                                    snackbar.showSnackbar("${item.type.displayName()} deleted")
+                                    if (snackbar.showSnackbar("${item.type.displayName()} deleted", "Undo") == SnackbarResult.ActionPerformed) {
+                                        when (item.type) {
+                                            TimelineItemType.REMINDER -> reminder?.let { lifeItemRepository.save(it) }
+                                            TimelineItemType.ROUTINE -> {
+                                                routine?.let { lifeItemRepository.save(it) }
+                                                deletedRoutineOccurrences.forEach { lifeItemRepository.save(it) }
+                                            }
+                                            TimelineItemType.EVENT -> event?.let { lifeItemRepository.save(it) }
+                                            TimelineItemType.ALARM -> alarm?.let {
+                                                lifeItemRepository.save(it)
+                                                if (it.enabled && it.scheduledAt > currentTimeMillis()) alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + it.id, triggerAt = it.scheduledAt, label = it.label, vibration = it.vibration, sound = it.sound))
+                                            }
+                                            TimelineItemType.TIMER -> timer?.let { lifeItemRepository.save(it) }
+                                            TimelineItemType.ITINERARY -> itineraryEntry?.let {
+                                                lifeItemRepository.save(it)
+                                                transportation?.let { row -> lifeItemRepository.save(row) }
+                                                lodging?.let { row -> lifeItemRepository.save(row) }
+                                            }
+                                            TimelineItemType.TASK, TimelineItemType.MEDICATION -> Unit
+                                        }
+                                    }
                                 }
                             }
                             lifeItemBeingViewed = null
@@ -543,12 +641,12 @@ fun LifeMinderApp(
                 taskBeingViewed != null ->
                     TaskDetailScreen(
                         task = taskBeingViewed!!,
+                        platformActions = platformActions,
                         projectName = projects.firstOrNull { it.id == taskBeingViewed!!.projectId }?.name,
                         tripName = tripTasks.firstOrNull { it.taskId == taskBeingViewed!!.id }?.tripId?.let { tripId -> trips.firstOrNull { it.id == tripId }?.name },
                         contexts = contexts.filter { it.id in taskBeingViewed!!.contextIds }.map { it.name },
                         tags = tags.filter { it.id in taskBeingViewed!!.tagIds }.map { it.name },
                         dependencies = tasks.filter { it.id in taskBeingViewed!!.dependencyIds }.map { it.title },
-                        onBack = { taskBeingViewed = null },
                         onEdit = { taskBeingEdited = taskBeingViewed },
                         onComplete = {
                             taskBeingViewed?.let(completeTask)
@@ -573,7 +671,6 @@ fun LifeMinderApp(
                                 it.projectId == selectedProject!!.id && it.status != TaskStatus.ARCHIVED
                             },
                         sessions = sessions.filter { it.projectId == selectedProject!!.id },
-                        onBack = { selectedProject = null },
                         onEditProject = { projectBeingEdited = selectedProject },
                         onAddTask = {
                             taskBeingEdited =
@@ -583,16 +680,17 @@ fun LifeMinderApp(
                                     status = TaskStatus.READY,
                                 )
                         },
-                        onEditTask = { taskBeingEdited = it },
+                        onEditTask = { taskBeingViewed = it },
                         onComplete = completeTask,
                         padding = padding,
                     )
                 destination == AppDestination.INBOX ->
                     TaskListScreen(
-                        title = "Unassigned tasks — capture now, organize later",
-                        tasks = tasks.filter { it.status == TaskStatus.INBOX },
+                        title = "Tasks",
+                        tasks = tasks.filter { it.status !in setOf(TaskStatus.ARCHIVED, TaskStatus.CANCELLED) },
                         projects = projects,
-                        onEdit = { taskBeingEdited = it },
+                        tripTaskIds = tripTasks.mapTo(mutableSetOf()) { it.taskId },
+                        onEdit = { taskBeingViewed = it },
                         onComplete = completeTask,
                         padding = padding,
                     )
@@ -614,6 +712,10 @@ fun LifeMinderApp(
                         onNewTrip = {
                             selectedTripId = null
                             destination = AppDestination.TRIPS
+                        },
+                        onNewChecklist = {
+                            newListName = ""
+                            showNewListDialog = true
                         },
                         padding = padding,
                     )
@@ -651,6 +753,7 @@ fun LifeMinderApp(
                         tasks = tasks,
                         plan = dailyPlan,
                         projects = projects,
+                        platformActions = platformActions,
                         onEdit = { showQuickAdd = false; taskBeingViewed = it },
                         onCompleteTask = completeTask,
                         onSavePlan = { scope.launch { planningRepository.save(it) } },
@@ -681,6 +784,11 @@ fun LifeMinderApp(
                             }
                         },
                         onDoneTimeline = completeTimelineItem,
+                        onOpenMedications = {
+                            lifeItemQuickType = "Medication"
+                            lifeItemsShowAdd = false
+                            destination = AppDestination.LIFE_ITEMS
+                        },
                         padding = padding,
                     )
                 destination == AppDestination.LIFE_ITEMS ->
@@ -696,16 +804,51 @@ fun LifeMinderApp(
                         timerPresets,
                         lifeItemQuickType,
                         lifeItemsShowAdd,
+                        lifeItemEditSourceId,
+                        platformActions.currentTimezoneId(),
                         onOpenMedication = { medicationId ->
                             lifeItemsShowAdd = false
                             medicationBeingViewedId = medicationId
                         },
+                        onOpenLifeItem = { item ->
+                            lifeItemsShowAdd = false
+                            lifeItemBeingViewed = item
+                        },
+                        onEditFinished = { lifeItemEditSourceId = null },
+                        onAddMedication = {
+                            val createdAt = currentTimeMillis()
+                            medicationBeingEdited = MedicationEntity(name = "", startDate = platformActions.localDateEpochMillis(createdAt), createdAt = createdAt, updatedAt = createdAt)
+                        },
+                        onAddAlarm = {
+                            destination = AppDestination.TIMERS
+                            alarmCreationRequest += 1
+                        },
+                        onAddTimer = {
+                            destination = AppDestination.TIMERS
+                            timerCreationRequest += 1
+                        },
                         repository = lifeItemRepository,
                         alarmScheduler = alarmScheduler,
+                        platformActions = platformActions,
                         padding = padding,
                     )
                 destination == AppDestination.UPCOMING ->
-                    UpcomingScreen(timeline + deviceCalendarTimeline, now, padding)
+                    UpcomingScreen(
+                        timeline + deviceCalendarTimeline,
+                        now,
+                        platformActions,
+                        onOpen = { item ->
+                            when (item.type) {
+                                TimelineItemType.TASK -> tasks.firstOrNull { it.id == item.id }?.let { taskBeingViewed = it }
+                                TimelineItemType.MEDICATION -> medicationBeingViewedId = item.sourceId
+                                TimelineItemType.EVENT ->
+                                    if (item.status == "CALENDAR") selectedCalendarEvent = deviceCalendarEvents.firstOrNull { it.id == item.id && it.calendarId == item.sourceId }
+                                    else lifeItemBeingViewed = item
+                                else -> lifeItemBeingViewed = item
+                            }
+                        },
+                        padding,
+                    )
                 destination == AppDestination.TRIPS ->
                     TripsScreen(
                         trips,
@@ -715,9 +858,12 @@ fun LifeMinderApp(
                         transportationDetails,
                         lodgingDetails,
                         tasks,
+                        checklists,
+                        checklistItems,
                         lifeItemRepository,
                         alarmScheduler,
                         platformActions,
+                        platformActions.currentTimezoneId(),
                         selectedTripId,
                         tripEntryRequest,
                         onAddTask = { tripId ->
@@ -731,7 +877,8 @@ fun LifeMinderApp(
                         tasks = tasks,
                         plan = dailyPlan,
                         now = now,
-                        onEdit = { taskBeingEdited = it },
+                        platformActions = platformActions,
+                        onEdit = { taskBeingViewed = it },
                         onComplete = completeTask,
                         onStart = { task ->
                             val started = currentTimeMillis()
@@ -791,9 +938,11 @@ fun LifeMinderApp(
                         },
                         onSaveStandaloneAlarm = { alarm ->
                             scope.launch {
-                                val id = lifeItemRepository.save(alarm)
+                                val savedAlarm = alarm.copy(label = alarm.label.ifBlank { "Alarm" }, enabled = true)
+                                val id = lifeItemRepository.save(savedAlarm)
                                 alarmScheduler.cancel(3_000_000 + id)
-                                if (alarm.enabled) alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + id, triggerAt = alarm.scheduledAt, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
+                                alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + id, triggerAt = savedAlarm.scheduledAt, label = savedAlarm.label, vibration = savedAlarm.vibration, sound = savedAlarm.sound))
+                                snackbar.showSnackbar(alarmSetMessage(savedAlarm.scheduledAt - currentTimeMillis()))
                             }
                         },
                         onStartStandaloneTimer = { name, duration ->
@@ -804,10 +953,10 @@ fun LifeMinderApp(
                             }
                         },
                         onSavePreset = { preset -> scope.launch { lifeItemRepository.save(preset) } },
-                        onDeletePreset = { preset -> scope.launch { lifeItemRepository.removePreset(preset.id) } },
+                        onDeletePreset = { preset -> scope.launch { lifeItemRepository.removePreset(preset.id); if (snackbar.showSnackbar("Timer preset deleted", "Undo") == SnackbarResult.ActionPerformed) lifeItemRepository.save(preset) } },
                         onSaveProfile = { profile -> scope.launch { lifeItemRepository.save(profile) } },
                         onSetDefaultProfile = { profile -> scope.launch { lifeItemRepository.setDefaultAlarmProfile(profile.id) } },
-                        onDeleteProfile = { profile -> scope.launch { lifeItemRepository.removeAlarmProfile(profile.id) } },
+                        onDeleteProfile = { profile -> scope.launch { lifeItemRepository.removeAlarmProfile(profile.id); if (snackbar.showSnackbar("Alarm profile deleted", "Undo") == SnackbarResult.ActionPerformed) lifeItemRepository.save(profile) } },
                         onToggleStandaloneTimer = { timer ->
                             scope.launch {
                                 if (timer.state == "RUNNING") {
@@ -833,12 +982,19 @@ fun LifeMinderApp(
                             scope.launch {
                                 alarmScheduler.cancel(3_000_000 + alarm.id)
                                 lifeItemRepository.removeAlarm(alarm.id)
+                                if (snackbar.showSnackbar("Alarm deleted", "Undo") == SnackbarResult.ActionPerformed) {
+                                    lifeItemRepository.save(alarm)
+                                    if (alarm.enabled && alarm.scheduledAt > currentTimeMillis()) alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + alarm.id, triggerAt = alarm.scheduledAt, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
+                                }
                             }
                         },
                         onDeleteStandaloneTimer = { timer ->
                             scope.launch {
                                 alarmScheduler.cancelTimer(4_000_000 + timer.id)
                                 lifeItemRepository.removeTimer(timer.id)
+                                if (snackbar.showSnackbar("Timer deleted", "Undo") == SnackbarResult.ActionPerformed) {
+                                    lifeItemRepository.save(timer)
+                                }
                             }
                         },
                         padding = padding,
@@ -851,6 +1007,7 @@ fun LifeMinderApp(
                         reviews = reviews,
                         plannedTaskIds = dailyPlan.mapTo(mutableSetOf()) { it.taskId },
                         now = now,
+                        platformActions = platformActions,
                         weeklyDeferrals = weeklyDeferrals,
                         onSave = { scope.launch { reviewRepository.save(it) } },
                         onProcessInbox = { destination = AppDestination.INBOX },
@@ -870,9 +1027,9 @@ fun LifeMinderApp(
                     Text("From ${deviceCalendarNames[event.calendarId] ?: "device calendar"}", fontWeight = FontWeight.SemiBold)
                     Text(
                         if (event.allDay) {
-                            "${formatDate(event.startAt)} · All day"
+                            "${formatLocalDate(event.startAt, platformActions)} · All day"
                         } else {
-                            "${formatAlarmTime(event.startAt)} – ${formatAlarmTime(event.endAt)}"
+                            "${formatLocalAlarmDateTime(event.startAt, platformActions)} – ${formatLocalAlarmDateTime(event.endAt, platformActions)}"
                         },
                     )
                     if (event.location.isNotBlank()) Text(event.location)
@@ -888,14 +1045,17 @@ fun LifeMinderApp(
             onDismiss = { medicationBeingEdited = null },
             onSave = { updated ->
                 scope.launch {
-                    lifeItemRepository.save(updated)
+                    val savedId = lifeItemRepository.save(updated)
                     val minutes = updated.timesOfDay.substringBefore(',').trim().toIntOrNull()
-                    val nextOccurrence = medicationOccurrences.filter { it.medicationId == updated.id && it.status in setOf("DUE", "SNOOZED") }.minByOrNull { it.snoozedUntil ?: it.scheduledAt }
-                    if (minutes != null && nextOccurrence != null) {
-                        val rescheduled = nextOccurrence.copy(scheduledAt = dayKey(nextOccurrence.scheduledAt) * DAY_MILLIS + minutes * 60_000L, snoozedUntil = null, updatedAt = currentTimeMillis())
-                        lifeItemRepository.save(rescheduled)
-                        alarmScheduler.cancelReminder(2_000_000 + nextOccurrence.id)
-                        if (rescheduled.scheduledAt > currentTimeMillis()) alarmScheduler.scheduleReminder(2_000_000 + rescheduled.id, rescheduled.scheduledAt, updated.name, NotificationCategory.TASK_REMINDER)
+                    val nextOccurrence = medicationOccurrences.filter { it.medicationId == savedId && it.status in setOf("DUE", "SNOOZED") }.minByOrNull { it.snoozedUntil ?: it.scheduledAt }
+                    if (minutes != null) {
+                        val scheduledAt = platformActions.localDateTimeToEpoch(updated.startDate, minutes / 60, minutes % 60)
+                        val occurrence =
+                            nextOccurrence?.copy(scheduledAt = platformActions.localDateTimeToEpoch(platformActions.localDateEpochMillis(nextOccurrence.scheduledAt), minutes / 60, minutes % 60), snoozedUntil = null, updatedAt = currentTimeMillis())
+                                ?: MedicationOccurrenceEntity(medicationId = savedId, scheduledAt = scheduledAt, createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())
+                        val occurrenceId = lifeItemRepository.save(occurrence)
+                        alarmScheduler.cancelReminder(2_000_000 + (nextOccurrence?.id ?: occurrenceId))
+                        if (occurrence.scheduledAt > currentTimeMillis()) alarmScheduler.scheduleReminder(2_000_000 + occurrenceId, occurrence.scheduledAt, updated.name, NotificationCategory.TASK_REMINDER)
                     }
                 }
                 medicationBeingEdited = null
@@ -906,6 +1066,7 @@ fun LifeMinderApp(
     taskBeingEdited?.let { original ->
         TaskEditorDialog(
             original = original,
+            platformActions = platformActions,
             projects = projects,
             trips = trips,
             initialTripId = pendingTripTaskId ?: tripTasks.firstOrNull { it.taskId == original.id }?.tripId,
@@ -975,7 +1136,7 @@ fun LifeMinderApp(
                     Text("What kind of plan are you creating?")
                     Button(onClick = { showPlanTypeDialog = false; projectBeingEdited = Project(name = "") }, modifier = Modifier.fillMaxWidth()) { Text("Project") }
                     Button(onClick = { showPlanTypeDialog = false; selectedTripId = null; destination = AppDestination.TRIPS }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
-                    Button(onClick = { showPlanTypeDialog = false; newListName = ""; showNewListDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("List") }
+                    Button(onClick = { showPlanTypeDialog = false; newListName = ""; showNewListDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Checklist") }
                 }
             },
             confirmButton = {},
@@ -997,7 +1158,16 @@ fun LifeMinderApp(
                     Button(onClick = { close { lifeItemQuickType = "Reminder"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = purple) { Text("Reminder") }
                     Button(onClick = { close { destination = AppDestination.TIMERS; timerCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth(), colors = timeColor) { Text("Timer") }
                     Button(onClick = { close { destination = AppDestination.TIMERS; alarmCreationRequest += 1 } }, modifier = Modifier.fillMaxWidth(), colors = timeColor) { Text("Alarm") }
-                    Button(onClick = { close { lifeItemQuickType = "Medication"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Medication") }
+                    Button(
+                        onClick = {
+                            close {
+                                val createdAt = currentTimeMillis()
+                                medicationBeingEdited = MedicationEntity(name = "", startDate = platformActions.localDateEpochMillis(createdAt), createdAt = createdAt, updatedAt = createdAt)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = scheduleColor,
+                    ) { Text("Medication") }
                     Button(onClick = { close { lifeItemQuickType = "Event"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Event") }
                     Button(onClick = { close { lifeItemQuickType = "Routine"; lifeItemsShowAdd = true; destination = AppDestination.LIFE_ITEMS } }, modifier = Modifier.fillMaxWidth(), colors = scheduleColor) { Text("Routine") }
                     OutlinedButton(onClick = { close { selectedTripId = null; destination = AppDestination.TRIPS } }, modifier = Modifier.fillMaxWidth()) { Text("Trip") }
@@ -1011,8 +1181,13 @@ fun LifeMinderApp(
     if (showNewListDialog) {
         AlertDialog(
             onDismissRequest = { showNewListDialog = false },
-            title = { Text("New list") },
-            text = { OutlinedTextField(newListName, { newListName = it }, label = { Text("List name") }, singleLine = true) },
+            title = { Text("New reusable checklist") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("You can reuse this checklist when preparing future trips.")
+                    OutlinedTextField(newListName, { newListName = it }, label = { Text("Checklist name") }, singleLine = true)
+                }
+            },
             confirmButton = { Button(enabled = newListName.isNotBlank(), onClick = { scope.launch { selectedChecklistId = lifeItemRepository.save(ChecklistEntity(name = newListName.trim(), createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())) }; showNewListDialog = false }) { Text("Create") } },
             dismissButton = { TextButton(onClick = { showNewListDialog = false }) { Text("Cancel") } },
         )
@@ -1025,7 +1200,20 @@ fun LifeMinderApp(
                 onDismiss = { selectedChecklistId = null },
                 onAdd = { text -> scope.launch { val now = currentTimeMillis(); lifeItemRepository.save(ChecklistItemEntity(checklistId = listId, text = text, sortOrder = checklistItems.count { it.checklistId == listId }, createdAt = now, updatedAt = now)) } },
                 onToggle = { item -> scope.launch { lifeItemRepository.save(item.copy(checked = !item.checked, updatedAt = currentTimeMillis())) } },
-                onDelete = { scope.launch { lifeItemRepository.deleteChecklist(listId) }; selectedChecklistId = null },
+                onRemoveItem = { item -> scope.launch { lifeItemRepository.deleteChecklistItem(item.id) } },
+                onReset = { scope.launch { checklistItems.filter { it.checklistId == listId && it.checked }.forEach { lifeItemRepository.save(it.copy(checked = false, updatedAt = currentTimeMillis())) } } },
+                onSaveAsReusable = null,
+                onDelete = {
+                    val deletedItems = checklistItems.filter { it.checklistId == listId }
+                    scope.launch {
+                        lifeItemRepository.deleteChecklist(listId)
+                        if (snackbar.showSnackbar("Checklist deleted", "Undo") == SnackbarResult.ActionPerformed) {
+                            lifeItemRepository.save(checklist)
+                            deletedItems.forEach { lifeItemRepository.save(it) }
+                        }
+                    }
+                    selectedChecklistId = null
+                },
             )
         }
     }
@@ -1103,29 +1291,54 @@ private fun TaskListScreen(
     title: String,
     tasks: List<Task>,
     projects: List<Project>,
+    tripTaskIds: Set<Long>,
     onEdit: (Task) -> Unit,
     onComplete: (Task) -> Unit,
     padding: PaddingValues,
 ) {
     var query by remember { mutableStateOf("") }
     var priorityFilter by remember { mutableStateOf<Priority?>(null) }
+    var scopeFilter by remember { mutableStateOf("All") }
     val filtered =
         tasks.filter {
             (query.isBlank() || it.title.contains(query, true) || it.description.contains(query, true)) &&
-                (priorityFilter == null || it.priority == priorityFilter)
+                (priorityFilter == null || it.priority == priorityFilter) &&
+                when (scopeFilter) {
+                    "Inbox" -> it.status == TaskStatus.INBOX && it.projectId == null && it.id !in tripTaskIds
+                    "Projects" -> it.projectId != null
+                    "Trips" -> it.id in tripTaskIds
+                    else -> true
+                }
         }
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search tasks") }, singleLine = true)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(null, Priority.CRITICAL, Priority.HIGH).forEach { priority ->
-                OutlinedButton(onClick = { priorityFilter = priority }) { Text(priority?.displayName() ?: "All") }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("All", "Inbox", "Projects", "Trips").forEach { scope ->
+                OutlinedButton(
+                    onClick = { scopeFilter = scope },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (scopeFilter == scope) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
+                ) { Text(scope) }
+            }
+        }
+        listOf(null, Priority.CRITICAL, Priority.HIGH, Priority.NORMAL, Priority.LOW, Priority.SOMEDAY).chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { priority ->
+                    OutlinedButton(
+                        onClick = { priorityFilter = priority },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (priorityFilter == priority) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                        ),
+                    ) { Text(priority?.displayName() ?: "All") }
+                }
             }
         }
         if (filtered.isEmpty()) {
             EmptyMessage("Nothing here yet. Tap + to capture a task.")
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(filtered, key = { it.id }) { task ->
                     TaskCard(task, projects.firstOrNull { it.id == task.projectId }?.name, onEdit, onComplete)
                 }
@@ -1143,7 +1356,6 @@ private fun TaskCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth().clickable { onEdit(task) }, colors = CardDefaults.cardColors(containerColor = priorityColor(task.priority).copy(alpha = 0.16f))) {
         Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { onComplete(task) }) { Text("✓") }
             Column(Modifier.weight(1f)) {
                 Text(task.title, fontWeight = FontWeight.SemiBold, textDecoration = if (task.status == TaskStatus.COMPLETED) TextDecoration.LineThrough else null)
                 Text(
@@ -1163,6 +1375,9 @@ private fun TaskCard(
                     )
                 }
             }
+            if (task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
+                OutlinedButton(onClick = { onComplete(task) }) { Text("Done") }
+            }
         }
     }
 }
@@ -1180,19 +1395,28 @@ private fun ProjectListScreen(
     onOpenChecklist: (Long) -> Unit,
     onNewProject: () -> Unit,
     onNewTrip: () -> Unit,
+    onNewChecklist: () -> Unit,
     padding: PaddingValues,
 ) {
     var query by remember { mutableStateOf("") }
     val filtered = projects.filter { query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true) }
-    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("New", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onNewProject, modifier = Modifier.weight(1f)) { Text("Project") }
-            OutlinedButton(onClick = onNewTrip, modifier = Modifier.weight(1f)) { Text("Trip") }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item { Text("New", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onNewProject, modifier = Modifier.weight(1f)) { Text("Project") }
+                OutlinedButton(onClick = onNewTrip, modifier = Modifier.weight(1f)) { Text("Trip") }
+                OutlinedButton(onClick = onNewChecklist, modifier = Modifier.weight(1f)) { Text("Checklist") }
+            }
         }
-        OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search plans") }, singleLine = true)
-        if (trips.isNotEmpty()) Text("Trips", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        trips.filter { query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true) }.forEach { trip ->
+        item { OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search plans") }, singleLine = true) }
+        val visibleTrips = trips.filter { query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true) }
+        if (visibleTrips.isNotEmpty()) item { Text("Trips", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(visibleTrips, key = { "plan-trip-${it.id}" }) { trip ->
             Card(Modifier.fillMaxWidth().clickable { onOpenTrip(trip.id) }, colors = CardDefaults.cardColors(containerColor = Color(trip.coverColor).copy(alpha = 0.22f))) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(trip.name, fontWeight = FontWeight.Bold)
@@ -1201,9 +1425,9 @@ private fun ProjectListScreen(
                 }
             }
         }
-        val visibleLists = checklists.filter { query.isBlank() || it.name.contains(query, true) }
-        if (visibleLists.isNotEmpty()) Text("Lists", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        visibleLists.forEach { checklist ->
+        val visibleLists = checklists.filter { it.tripId == null && (query.isBlank() || it.name.contains(query, true)) }
+        if (visibleLists.isNotEmpty()) item { Text("Reusable checklists", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(visibleLists, key = { "plan-list-${it.id}" }) { checklist ->
             val listItems = checklistItems.filter { it.checklistId == checklist.id }
             Card(Modifier.fillMaxWidth().clickable { onOpenChecklist(checklist.id) }) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1212,12 +1436,11 @@ private fun ProjectListScreen(
                 }
             }
         }
-        if (filtered.isNotEmpty()) Text("Projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (filtered.isNotEmpty()) item { Text("Projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         if (filtered.isEmpty()) {
-            if (trips.isEmpty() && checklists.isEmpty()) EmptyMessage("No plans yet. Tap + to create a project, trip, or list.")
+            if (visibleTrips.isEmpty() && visibleLists.isEmpty()) item { EmptyMessage("No plans match your search. Use New to create one.") }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(filtered, key = { it.id }) { project ->
+                items(filtered, key = { "plan-project-${it.id}" }) { project ->
                     val projectTasks = tasks.filter { it.projectId == project.id }
                     Card(Modifier.fillMaxWidth().clickable { onOpen(project) }, colors = CardDefaults.cardColors(containerColor = Color(project.colorArgb).copy(alpha = 0.22f))) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1233,14 +1456,12 @@ private fun ProjectListScreen(
             }
         }
     }
-}
 
 @Composable
 private fun ProjectDetailScreen(
     project: Project,
     tasks: List<Task>,
     sessions: List<WorkSession>,
-    onBack: () -> Unit,
     onEditProject: () -> Unit,
     onAddTask: () -> Unit,
     onEditTask: (Task) -> Unit,
@@ -1248,17 +1469,16 @@ private fun ProjectDetailScreen(
     padding: PaddingValues,
 ) {
     Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack) { Text("Back") }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             OutlinedButton(onClick = onEditProject) { Text("Edit project") }
-            Button(onClick = onAddTask) { Text("Add task") }
         }
+        Button(onClick = onAddTask, modifier = Modifier.fillMaxWidth()) { Text("Add task") }
         Text(project.desiredOutcome.ifBlank { "No desired outcome defined." })
         Text("Focused ${formatDuration(sessions.sumOf { it.activeMillis })} across ${sessions.size} sessions")
         if (tasks.isEmpty()) {
             EmptyMessage("This project has no tasks yet.")
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tasks, key = { it.id }) { TaskCard(it, null, onEditTask, onComplete) }
             }
         }
@@ -1266,6 +1486,7 @@ private fun ProjectDetailScreen(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun MedicationEditorDialog(
     original: MedicationEntity,
     onDismiss: () -> Unit,
@@ -1281,24 +1502,23 @@ private fun MedicationEditorDialog(
     var active by remember(original.id) { mutableStateOf(original.active) }
     var quantityRemaining by remember(original.id) { mutableStateOf(original.quantityRemaining?.toString().orEmpty()) }
     var notes by remember(original.id) { mutableStateOf(original.generalNotes) }
+    var showTimePicker by remember(original.id) { mutableStateOf(false) }
+    var showAdvanced by remember(original.id) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxSize(),
         title = { Text("Edit ${original.name}") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { OutlinedTextField(name, { name = it }, label = { Text("Medication name") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
                 item { OutlinedTextField(dosage, { dosage = it }, label = { Text("Dosage") }, modifier = Modifier.fillMaxWidth()) }
                 item { OutlinedTextField(instructions, { instructions = it }, label = { Text("Instructions") }, modifier = Modifier.fillMaxWidth()) }
-                item {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(hour, { hour = it.filter(Char::isDigit).take(2) }, label = { Text("Hour (0–23)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        OutlinedTextField(minute, { minute = it.filter(Char::isDigit).take(2) }, label = { Text("Minute") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    }
-                }
+                item { OutlinedButton(onClick = { showTimePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Time: ${formatClockTime(hour.toIntOrNull() ?: 9, minute.toIntOrNull() ?: 0)}") } }
                 item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(repeatDaily, { repeatDaily = it }); Text("Repeat daily", modifier = Modifier.padding(start = 8.dp)) } }
                 item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(active, { active = it }); Text("Active", modifier = Modifier.padding(start = 8.dp)) } }
-                item { OutlinedTextField(quantityRemaining, { quantityRemaining = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Quantity remaining") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)) }
-                item { OutlinedTextField(notes, { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
+                item { OutlinedButton(onClick = { showAdvanced = !showAdvanced }, modifier = Modifier.fillMaxWidth()) { Text(if (showAdvanced) "Hide advanced options" else "Advanced options") } }
+                if (showAdvanced) item { OutlinedTextField(quantityRemaining, { quantityRemaining = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Quantity remaining") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)) }
+                if (showAdvanced) item { OutlinedTextField(notes, { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
             }
         },
         confirmButton = {
@@ -1322,13 +1542,34 @@ private fun MedicationEditorDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+    if (showTimePicker) {
+        val picker =
+            rememberTimePickerState(
+                initialHour = (hour.toIntOrNull() ?: 9).coerceIn(0, 23),
+                initialMinute = (minute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                is24Hour = false,
+            )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("Choose medication time") },
+            text = { TimePicker(picker) },
+            confirmButton = {
+                Button(onClick = {
+                    hour = picker.hour.toString()
+                    minute = picker.minute.toString().padStart(2, '0')
+                    showTimePicker = false
+                }) { Text("Set time") }
+            },
+            dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable
 private fun MedicationDetailScreen(
     medication: MedicationEntity,
     occurrences: List<MedicationOccurrenceEntity>,
-    onBack: () -> Unit,
+    platformActions: PlatformActions,
     onEdit: () -> Unit,
     onDone: () -> Unit,
     onDelete: () -> Unit,
@@ -1342,19 +1583,17 @@ private fun MedicationDetailScreen(
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onBack) { Text("Back") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onEdit) { Text("Edit medication") }
             }
         }
-        item { Text(medication.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item { Text("Medication · ${if (medication.active) "active" else "paused"}") }
         if (medication.dosageText.isNotBlank()) item { Text("Dosage: ${medication.dosageText}") }
         if (medication.instructions.isNotBlank()) item { Text("Instructions: ${medication.instructions}") }
         item { Text("Schedule: ${if (medication.scheduleType == "ONCE") "Once" else "Daily"} at ${formatMedicationTimes(medication.timesOfDay)}") }
         item { Text("Starts: ${formatDate(medication.startDate)}") }
         medication.endDate?.let { item { Text("Ends: ${formatDate(it)}") } }
-        nextOccurrence?.let { item { Text("Next: ${formatAlarmTime(it.snoozedUntil ?: it.scheduledAt)}") } }
+        nextOccurrence?.let { item { Text("Next: ${formatLocalAlarmDateTime(it.snoozedUntil ?: it.scheduledAt, platformActions)}") } }
         medication.quantityRemaining?.let { item { Text("Quantity remaining: $it") } }
         if (medication.prescribingNotes.isNotBlank()) item { Text("Prescribing notes: ${medication.prescribingNotes}") }
         if (medication.generalNotes.isNotBlank()) item { Text("Notes: ${medication.generalNotes}") }
@@ -1367,7 +1606,8 @@ private fun MedicationDetailScreen(
 @Composable
 private fun TimelineItemDetailScreen(
     timelineItem: TimelineItem,
-    onBack: () -> Unit,
+    platformActions: PlatformActions,
+    onEdit: () -> Unit,
     onDone: () -> Unit,
     onDelete: () -> Unit,
     padding: PaddingValues,
@@ -1378,13 +1618,16 @@ private fun TimelineItemDetailScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
-        item { OutlinedButton(onClick = onBack) { Text("Back") } }
-        item { Text(timelineItem.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onEdit) { Text("Edit") }
+            }
+        }
         item { Text("${timelineItem.type.displayName()} · ${timelineItem.status.lowercase()}") }
-        timelineItem.startAt?.let { start -> item { Text("Scheduled: ${formatAlarmTime(start)}") } }
-        timelineItem.endAt?.let { end -> item { Text("Ends: ${formatAlarmTime(end)}") } }
+        timelineItem.startAt?.let { start -> item { Text("Scheduled: ${formatLocalAlarmDateTime(start, platformActions)}") } }
+        timelineItem.endAt?.let { end -> item { Text("Ends: ${formatLocalAlarmDateTime(end, platformActions)}") } }
         if (timelineItem.subtitle.isNotBlank()) item { Text(timelineItem.subtitle) }
-        if (timelineItem.actionable && timelineItem.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN", "SNOOZED")) item { Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") } }
+        if (timelineItem.actionable && timelineItem.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN", "SNOOZED")) item { Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text(timelineDoneLabel(timelineItem.type)) } }
         item { BottomLeftDeleteButton { confirmDelete = true } }
     }
     DeleteItemDialog(timelineItem.title, confirmDelete, { confirmDelete = false }, onDelete)
@@ -1430,12 +1673,12 @@ private fun formatMedicationTimes(value: String): String =
 @Composable
 private fun TaskDetailScreen(
     task: Task,
+    platformActions: PlatformActions,
     projectName: String?,
     tripName: String?,
     contexts: List<String>,
     tags: List<String>,
     dependencies: List<String>,
-    onBack: () -> Unit,
     onEdit: () -> Unit,
     onComplete: () -> Unit,
     onDelete: () -> Unit,
@@ -1448,15 +1691,10 @@ private fun TaskDetailScreen(
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onBack) { Text("Back") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onEdit) { Text("Edit task") }
             }
         }
-        if (task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
-            item { Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) { Text("Complete") } }
-        }
-        item { Text(task.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item { Text(task.description.ifBlank { "No description or notes." }) }
         item { Text("Status: ${task.status.displayName()}") }
         item { Text("Priority: ${task.priority.displayName()}") }
@@ -1464,8 +1702,8 @@ private fun TaskDetailScreen(
         projectName?.let { item { Text("Project: $it") } }
         tripName?.let { item { Text("Trip: $it") } }
         task.estimatedMinutes?.let { item { Text("Estimated duration: $it minutes") } }
-        task.dueAt?.let { item { Text("Due: ${formatAlarmTime(it)}") } }
-        task.reminderAt?.let { item { Text("Reminder: ${formatAlarmTime(it)}") } }
+        task.dueAt?.let { item { Text("Due: ${formatLocalAlarmDateTime(it, platformActions)}") } }
+        task.reminderAt?.let { item { Text("Reminder: ${formatLocalAlarmDateTime(it, platformActions)}") } }
         task.recurrenceRule?.let { encoded ->
             val rule = RecurrenceRule.decode(encoded)
             item { Text(rule?.let { "Repeats every ${it.interval} ${it.unit.displayName().lowercase()}${if (it.interval == 1) "" else "s"}, based on ${it.mode.displayName().lowercase()} date" } ?: "Repeats: $encoded") }
@@ -1474,7 +1712,10 @@ private fun TaskDetailScreen(
         if (tags.isNotEmpty()) item { Text("Tags: ${tags.joinToString()}") }
         if (dependencies.isNotEmpty()) item { Text("Depends on: ${dependencies.joinToString()}") }
         if (task.isBlocked) item { Text("Blocked by: ${task.blockingTaskTitles.joinToString()}", color = MaterialTheme.colorScheme.error) }
-        task.completedAt?.let { item { Text("Completed: ${formatAlarmTime(it)}") } }
+        task.completedAt?.let { item { Text("Completed: ${formatLocalAlarmDateTime(it, platformActions)}") } }
+        if (task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)) {
+            item { Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) { Text("Complete task") } }
+        }
         item { BottomLeftDeleteButton { confirmDelete = true } }
     }
     if (confirmDelete) {
@@ -1500,6 +1741,7 @@ private fun TaskDetailScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun TaskEditorDialog(
     original: Task,
+    platformActions: PlatformActions,
     projects: List<Project>,
     trips: List<TripEntity>,
     initialTripId: Long?,
@@ -1530,13 +1772,16 @@ private fun TaskEditorDialog(
     var repeatMode by remember(original.id) { mutableStateOf(originalRule?.mode ?: RecurrenceMode.FIXED) }
     var reminderAmount by remember(original.id) { mutableStateOf(if (original.reminderAt != null && original.dueAt != null) (((original.dueAt - original.reminderAt) / 60_000L).coerceAtLeast(0)).toString() else "") }
     var reminderUnit by remember(original.id) { mutableStateOf("minutes") }
-    var dueDate by remember(original.id) { mutableStateOf(original.dueAt?.let { dayKey(it) * DAY_MILLIS }) }
-    var dueHour by remember(original.id) { mutableStateOf(original.dueAt?.let { ((it - dayKey(it) * DAY_MILLIS) / 3_600_000L).toString() } ?: "9") }
-    var dueMinute by remember(original.id) { mutableStateOf(original.dueAt?.let { (((it - dayKey(it) * DAY_MILLIS) / 60_000L) % 60).toString().padStart(2, '0') } ?: "00") }
+    var dueDate by remember(original.id) { mutableStateOf(original.dueAt?.let(platformActions::localDateEpochMillis)) }
+    var dueHour by remember(original.id) { mutableStateOf(original.dueAt?.let { (platformActions.localMinutesOfDay(it) / 60).toString() } ?: "9") }
+    var dueMinute by remember(original.id) { mutableStateOf(original.dueAt?.let { (platformActions.localMinutesOfDay(it) % 60).toString().padStart(2, '0') } ?: "00") }
     var showDuePicker by remember(original.id) { mutableStateOf(false) }
+    var showDueTimePicker by remember(original.id) { mutableStateOf(false) }
+    var showAdvanced by remember(original.id) { mutableStateOf(false) }
     var dependencySearch by remember(original.id) { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxSize(),
         title = { Text(if (original.id == 0L) "New task" else "Edit task") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1547,22 +1792,24 @@ private fun TaskEditorDialog(
                 item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(hasTrip, { checked -> hasTrip = checked; if (!checked) taskTripId = null }); Text("Part of an existing trip?", modifier = Modifier.padding(start = 8.dp)) } }
                 if (hasTrip) item { ChoiceRow("Trip", trips.map { it.id }, taskTripId, { id -> trips.firstOrNull { it.id == id }?.name ?: "Choose trip" }, { taskTripId = it }) }
                 item { PrioritySlider(priority, { priority = it }) }
-                if (!hasTrip) item { SelectorField("Status", TaskStatus.entries.filterNot { it == TaskStatus.ARCHIVED }, status, { it.displayName() }, { status = it }, Modifier.fillMaxWidth()) }
-                item { EffortSlider(energy, { energy = it }) }
                 item { OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit) }, label = { Text("Estimated minutes") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(onClick = { showDuePicker = true }, modifier = Modifier.weight(1f)) { Text(dueDate?.let(::formatDate) ?: "Set Date") }
-                        OutlinedTextField(dueHour, { dueHour = it.filter(Char::isDigit).take(2) }, label = { Text("Hour") }, modifier = Modifier.weight(.55f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        OutlinedTextField(dueMinute, { dueMinute = it.filter(Char::isDigit).take(2) }, label = { Text("Min") }, modifier = Modifier.weight(.55f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                        OutlinedButton(onClick = { showDueTimePicker = true }, enabled = dueDate != null, modifier = Modifier.weight(1f)) {
+                            Text(formatClockTime(dueHour.toIntOrNull() ?: 9, dueMinute.toIntOrNull() ?: 0))
+                        }
                     }
                 }
-                item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(repeatEnabled, { repeatEnabled = it }); Text("Repeat this task", modifier = Modifier.padding(start = 8.dp)) } }
-                if (repeatEnabled) {
+                item { OutlinedButton(onClick = { showAdvanced = !showAdvanced }, modifier = Modifier.fillMaxWidth()) { Text(if (showAdvanced) "Hide advanced options" else "Advanced options") } }
+                if (showAdvanced && !hasTrip) item { SelectorField("Status", TaskStatus.entries.filterNot { it == TaskStatus.ARCHIVED }, status, { it.displayName() }, { status = it }, Modifier.fillMaxWidth()) }
+                if (showAdvanced) item { EffortSlider(energy, { energy = it }) }
+                if (showAdvanced) item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(repeatEnabled, { repeatEnabled = it }); Text("Repeat this task", modifier = Modifier.padding(start = 8.dp)) } }
+                if (showAdvanced && repeatEnabled) {
                     item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(repeatInterval, { repeatInterval = it.filter(Char::isDigit) }, label = { Text("Every") }, modifier = Modifier.weight(.5f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); SelectorField("Interval", RecurrenceUnit.entries, repeatUnit, { it.name.lowercase() + if ((repeatInterval.toIntOrNull() ?: 1) == 1) "" else "s" }, { repeatUnit = it }, Modifier.weight(1f)) } }
                     item { ChoiceRow("Repeats from", RecurrenceMode.entries, repeatMode, { if (it == RecurrenceMode.FIXED) "Scheduled date" else "Completion date" }, { repeatMode = it }) }
                 }
-                item {
+                if (showAdvanced) item {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Reminder:", style = MaterialTheme.typography.labelMedium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1572,10 +1819,13 @@ private fun TaskEditorDialog(
                         }
                     }
                 }
-                if (tags.isNotEmpty()) {
+                if (showAdvanced && tags.isNotEmpty()) {
                     item { ToggleChoices("Tags", tags, tagIds, { it.id }, { it.name }, { tagIds = it }) }
                 }
-                if (availableDependencies.isNotEmpty()) {
+                if (showAdvanced && contexts.isNotEmpty()) {
+                    item { ToggleChoices("Contexts", contexts, contextIds, { it.id }, { it.name }, { contextIds = it }) }
+                }
+                if (showAdvanced && availableDependencies.isNotEmpty()) {
                     item {
                         OutlinedTextField(
                             dependencySearch,
@@ -1605,7 +1855,7 @@ private fun TaskEditorDialog(
                 onClick = {
                     val hour = dueHour.toIntOrNull()?.coerceIn(0, 23) ?: 9
                     val minute = dueMinute.toIntOrNull()?.coerceIn(0, 59) ?: 0
-                    val due = dueDate?.plus(hour * 3_600_000L + minute * 60_000L)
+                    val due = dueDate?.let { platformActions.localDateTimeToEpoch(it, hour, minute) }
                     val reminderMultiplier = when (reminderUnit) { "days" -> DAY_MILLIS; "hours" -> 3_600_000L; else -> 60_000L }
                     val rule = if (repeatEnabled) RecurrenceRule((repeatInterval.toIntOrNull() ?: 1).coerceAtLeast(1), repeatUnit, repeatMode) else null
                     onSave(
@@ -1620,7 +1870,7 @@ private fun TaskEditorDialog(
                             dueAt = due,
                             reminderAt = reminderAmount.toLongOrNull()?.let { amount -> due?.minus(amount * reminderMultiplier) },
                             recurrenceRule = rule?.encode(),
-                            contextIds = emptySet(),
+                            contextIds = contextIds,
                             tagIds = tagIds,
                             dependencyIds = dependencyIds,
                         ),
@@ -1635,6 +1885,27 @@ private fun TaskEditorDialog(
         val picker = rememberDatePickerState(initialSelectedDateMillis = dueDate)
         DatePickerDialog(onDismissRequest = { showDuePicker = false }, confirmButton = { TextButton(onClick = { dueDate = picker.selectedDateMillis; showDuePicker = false }) { Text("Use date") } }, dismissButton = { TextButton(onClick = { dueDate = null; showDuePicker = false }) { Text("Clear") } }) { DatePicker(state = picker) }
     }
+    if (showDueTimePicker) {
+        val picker =
+            rememberTimePickerState(
+                initialHour = (dueHour.toIntOrNull() ?: 9).coerceIn(0, 23),
+                initialMinute = (dueMinute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                is24Hour = false,
+            )
+        AlertDialog(
+            onDismissRequest = { showDueTimePicker = false },
+            title = { Text("Choose due time") },
+            text = { TimePicker(picker) },
+            confirmButton = {
+                Button(onClick = {
+                    dueHour = picker.hour.toString()
+                    dueMinute = picker.minute.toString().padStart(2, '0')
+                    showDueTimePicker = false
+                }) { Text("Set time") }
+            },
+            dismissButton = { TextButton(onClick = { showDueTimePicker = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable
@@ -1644,6 +1915,9 @@ private fun ChecklistDialog(
     onDismiss: () -> Unit,
     onAdd: (String) -> Unit,
     onToggle: (ChecklistItemEntity) -> Unit,
+    onRemoveItem: (ChecklistItemEntity) -> Unit,
+    onReset: () -> Unit,
+    onSaveAsReusable: (() -> Unit)?,
     onDelete: () -> Unit,
 ) {
     var newItem by remember(checklist.id) { mutableStateOf("") }
@@ -1652,7 +1926,7 @@ private fun ChecklistDialog(
         onDismissRequest = onDismiss,
         title = { Text(checklist.name) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(newItem, { newItem = it }, label = { Text("New item") }, singleLine = true, modifier = Modifier.weight(1f))
                     Button(enabled = newItem.isNotBlank(), onClick = { onAdd(newItem.trim()); newItem = "" }) { Text("Add") }
@@ -1661,8 +1935,15 @@ private fun ChecklistDialog(
                 items.forEach { item ->
                     Row(Modifier.fillMaxWidth().clickable { onToggle(item) }, verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = item.checked, onCheckedChange = { onToggle(item) })
-                        Text(item.text, textDecoration = if (item.checked) TextDecoration.LineThrough else null)
+                        Text(item.text, modifier = Modifier.weight(1f), textDecoration = if (item.checked) TextDecoration.LineThrough else null)
+                        TextButton(onClick = { onRemoveItem(item) }) { Text("Remove") }
                     }
+                }
+                if (items.any { it.checked }) {
+                    OutlinedButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) { Text("Reset all") }
+                }
+                onSaveAsReusable?.let { save ->
+                    OutlinedButton(onClick = save, modifier = Modifier.fillMaxWidth()) { Text("Save as reusable checklist") }
                 }
                 TextButton(onClick = { confirmDelete = true }) { Text("Delete list", color = MaterialTheme.colorScheme.error) }
             }
@@ -1724,9 +2005,70 @@ private fun priorityColor(priority: Priority): Color =
     when (priority) {
         Priority.SOMEDAY -> Color(0xff43a047)
         Priority.LOW -> Color(0xff1e88e5)
-        Priority.NORMAL -> Color(0xfffbc02d)
-        Priority.HIGH -> Color(0xfffb8c00)
+        Priority.NORMAL -> Color(0xffffe43b)
+        Priority.HIGH -> Color(0xffff8f00)
         Priority.CRITICAL -> Color(0xffe53935)
+    }
+
+private fun todayTypeColor(type: TimelineItemType): Color =
+    when (type) {
+        TimelineItemType.TASK -> priorityColor(Priority.NORMAL)
+        TimelineItemType.MEDICATION -> Color(0xff9c27b0)
+        TimelineItemType.EVENT -> Color(0xff00897b)
+        TimelineItemType.TIMER -> Color(0xff1e88e5)
+        TimelineItemType.REMINDER -> Color(0xfff9a825)
+        TimelineItemType.ROUTINE -> Color(0xff43a047)
+        TimelineItemType.ALARM -> Color(0xffe53935)
+        TimelineItemType.ITINERARY -> Color(0xff00838f)
+    }
+
+private fun todayTypeIcon(type: TimelineItemType): String =
+    when (type) {
+        TimelineItemType.TASK -> "\u2611"
+        TimelineItemType.MEDICATION -> "\uD83D\uDC8A"
+        TimelineItemType.EVENT -> "\uD83D\uDCC5"
+        TimelineItemType.TIMER -> "\u231A"
+        TimelineItemType.REMINDER -> "\uD83D\uDCDD"
+        TimelineItemType.ROUTINE -> "\uD83D\uDD01"
+        TimelineItemType.ALARM -> "\u23F0"
+        TimelineItemType.ITINERARY -> "\uD83D\uDCCD"
+    }
+
+private fun timelineDoneLabel(type: TimelineItemType): String =
+    when (type) {
+        TimelineItemType.MEDICATION -> "Taken"
+        TimelineItemType.ALARM -> "Dismiss"
+        TimelineItemType.TIMER -> "Finish"
+        TimelineItemType.ROUTINE -> "Done"
+        else -> "Complete"
+    }
+
+private fun itineraryTypeIcon(type: String): String =
+    when (type.uppercase()) {
+        "FLIGHT" -> "\u2708\uFE0F"
+        "HOTEL", "LODGING" -> "\uD83C\uDFE8"
+        "RESTAURANT", "MEAL" -> "\uD83C\uDF7D\uFE0F"
+        "ATTRACTION" -> "\uD83C\uDF9F\uFE0F"
+        "EVENT" -> "\uD83D\uDCC5"
+        "TRAIN" -> "\uD83D\uDE86"
+        "BUS" -> "\uD83D\uDE8C"
+        "FERRY" -> "\u26F4\uFE0F"
+        "TRANSFER", "TRANSPORTATION" -> "\uD83D\uDE90"
+        else -> "\uD83D\uDCCD"
+    }
+
+private fun itineraryTypeColor(type: String): Color =
+    when (type.uppercase()) {
+        "FLIGHT" -> Color(0xff1e88e5)
+        "HOTEL", "LODGING" -> Color(0xff8e24aa)
+        "RESTAURANT", "MEAL" -> Color(0xfff57c00)
+        "ATTRACTION" -> Color(0xffd81b60)
+        "EVENT" -> Color(0xff00897b)
+        "TRAIN" -> Color(0xff3949ab)
+        "BUS" -> Color(0xff43a047)
+        "FERRY" -> Color(0xff00acc1)
+        "TRANSFER", "TRANSPORTATION" -> Color(0xfff9a825)
+        else -> Color(0xff607d8b)
     }
 
 private fun effortColor(effort: EnergyRequirement): Color =
@@ -2120,6 +2462,7 @@ private fun ReviewScreen(
     reviews: List<ReviewRecord>,
     plannedTaskIds: Set<Long>,
     now: Long,
+    platformActions: PlatformActions,
     weeklyDeferrals: Int,
     onSave: (ReviewRecord) -> Unit,
     onProcessInbox: () -> Unit,
@@ -2130,9 +2473,11 @@ private fun ReviewScreen(
     var friction by remember { mutableStateOf("") }
     var nextPriority by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    val dayStart = dayKey(now) * DAY_MILLIS
-    val from = if (type == ReviewType.DAILY) dayStart else dayStart - 6 * DAY_MILLIS
-    val snapshot = AnalyticsService.snapshot(from, dayStart + DAY_MILLIS, now, tasks, projects, sessions, plannedTaskIds, if (type == ReviewType.WEEKLY) weeklyDeferrals else 0)
+    val dayMarker = platformActions.localDateEpochMillis(now)
+    val dayStart = platformActions.localDateTimeToEpoch(dayMarker, 0, 0)
+    val from = if (type == ReviewType.DAILY) dayStart else platformActions.localDateTimeToEpoch(dayMarker - 6 * DAY_MILLIS, 0, 0)
+    val dayEnd = platformActions.localDateTimeToEpoch(dayMarker + DAY_MILLIS, 0, 0)
+    val snapshot = AnalyticsService.snapshot(from, dayEnd, now, tasks, projects, sessions, plannedTaskIds, if (type == ReviewType.WEEKLY) weeklyDeferrals else 0)
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { ReviewType.entries.forEach { choice -> OutlinedButton(onClick = { type = choice }) { Text(if (type == choice) "${choice.displayName()} ✓" else choice.displayName()) } } }
@@ -2281,7 +2626,7 @@ private fun TimerScreen(
     padding: PaddingValues,
 ) {
     var tick by remember { mutableStateOf(currentTimeMillis()) }
-    var timerTab by remember { mutableStateOf("Timers") }
+    var timerTab by remember { mutableStateOf("Alarms") }
     var showProfileManager by remember { mutableStateOf(false) }
     var showProfilePicker by remember { mutableStateOf(false) }
     var profileBeingEdited by remember { mutableStateOf<AlarmProfileEntity?>(null) }
@@ -2292,15 +2637,20 @@ private fun TimerScreen(
     var pendingTimerDuration by remember { mutableStateOf(5 * 60_000L) }
     var showAlarmEditor by remember { mutableStateOf(false) }
     var editingAlarm by remember { mutableStateOf<StandaloneAlarmEntity?>(null) }
-    var alarmDate by remember { mutableStateOf(dayKey(currentTimeMillis()) * DAY_MILLIS) }
+    var alarmDate by remember { mutableStateOf(platformActions.localDateEpochMillis(currentTimeMillis())) }
     var showAlarmDatePicker by remember { mutableStateOf(false) }
+    var showAlarmTimePicker by remember { mutableStateOf(false) }
+    var showAlarmAdvanced by remember { mutableStateOf(false) }
     var customMinutes by remember { mutableStateOf("10") }
     var customHours by remember { mutableStateOf("0") }
     var customSeconds by remember { mutableStateOf("0") }
     var saveTimerPreset by remember { mutableStateOf(false) }
     var editingPreset by remember { mutableStateOf<com.geepscontrol.core.database.TimerPresetEntity?>(null) }
     var presetMenuId by remember { mutableStateOf<Long?>(null) }
-    var alarmLabel by remember { mutableStateOf("Wake up") }
+    var presetPendingDelete by remember { mutableStateOf<com.geepscontrol.core.database.TimerPresetEntity?>(null) }
+    var timerPendingDelete by remember { mutableStateOf<StandaloneTimerEntity?>(null) }
+    var alarmPendingDelete by remember { mutableStateOf<StandaloneAlarmEntity?>(null) }
+    var alarmLabel by remember { mutableStateOf("") }
     var alarmHour by remember { mutableStateOf("7") }
     var alarmMinute by remember { mutableStateOf("00") }
     var alarmRepeat by remember { mutableStateOf("Once") }
@@ -2337,11 +2687,15 @@ private fun TimerScreen(
     }
     fun openAlarmEditor(alarm: StandaloneAlarmEntity?) {
         editingAlarm = alarm
+        showAlarmAdvanced = false
         val rule = AlarmRepeatRule.decode(alarm?.recurrenceRule)
-        alarmLabel = alarm?.label ?: "Wake up"
-        alarmDate = alarm?.scheduledAt?.let { dayKey(it) * DAY_MILLIS } ?: dayKey(currentTimeMillis()) * DAY_MILLIS
-        alarmHour = alarm?.scheduledAt?.let { (((it % DAY_MILLIS) + DAY_MILLIS) % DAY_MILLIS / 3_600_000L).toString() } ?: "7"
-        alarmMinute = alarm?.scheduledAt?.let { ((((it % DAY_MILLIS) + DAY_MILLIS) % DAY_MILLIS / 60_000L) % 60).toString().padStart(2, '0') } ?: "00"
+        val openedAt = currentTimeMillis()
+        val defaultMinutes = (platformActions.localMinutesOfDay(openedAt) + 5).coerceAtMost(23 * 60 + 59)
+        val alarmMinutes = alarm?.scheduledAt?.let(platformActions::localMinutesOfDay) ?: defaultMinutes
+        alarmLabel = alarm?.label?.takeUnless { it == "Alarm" }.orEmpty()
+        alarmDate = platformActions.localDateEpochMillis(alarm?.scheduledAt ?: openedAt)
+        alarmHour = (alarmMinutes / 60).toString()
+        alarmMinute = (alarmMinutes % 60).toString().padStart(2, '0')
         alarmInterval = rule?.interval?.toString() ?: "1"
         alarmUnit = rule?.unit ?: AlarmRepeatUnit.DAY
         alarmWeekdays = rule?.weekdays.orEmpty()
@@ -2379,19 +2733,47 @@ private fun TimerScreen(
     }
     val runningStandalone = standaloneTimers.filter { it.state == "RUNNING" }
     val inactiveStandalone = standaloneTimers.filter { it.state != "RUNNING" }
-    val enabledStandaloneAlarms = standaloneAlarms.filter { it.enabled }
-    val disabledStandaloneAlarms = standaloneAlarms.filterNot { it.enabled }
-    val recentHistory = history.filter { it.endedAt >= dayKey(currentTimeMillis()) * DAY_MILLIS }
+    val alarmDateMarker = platformActions.localDateEpochMillis(tick)
+    val alarmDayStart = platformActions.localDateTimeToEpoch(alarmDateMarker, 0, 0)
+    val alarmDayEnd = platformActions.localDateTimeToEpoch(alarmDateMarker + DAY_MILLIS, 0, 0)
+    fun occurredToday(at: Long?): Boolean = at != null && at in alarmDayStart until alarmDayEnd
+    val todayAlarmHistory =
+        standaloneAlarms
+            .filter { occurredToday(it.lastTriggeredAt) || occurredToday(it.lastDismissedAt) }
+            .sortedByDescending { it.lastTriggeredAt ?: it.scheduledAt }
+    val enabledStandaloneAlarms = standaloneAlarms.filter { it.enabled && it.scheduledAt >= tick }
+    val otherStandaloneAlarms =
+        standaloneAlarms
+            .filterNot { it in enabledStandaloneAlarms || it in todayAlarmHistory }
+            .sortedWith(
+                compareBy<StandaloneAlarmEntity> { platformActions.localMinutesOfDay(it.scheduledAt) }
+                    .thenBy { it.scheduledAt },
+            )
+    val recentHistory = history.filter { it.endedAt >= platformActions.localDateTimeToEpoch(platformActions.localDateEpochMillis(currentTimeMillis()), 0, 0) }
     val quickTimerMinutes = setOf(5L, 10L, 15L, 30L, 45L, 60L)
-    Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(top = 16.dp, bottom = 88.dp)) {
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
         item { Text("Timers & Alarms", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Timers", "Alarms").forEach { value ->
+                listOf("Alarms", "Timers").forEach { value ->
                     OutlinedButton(onClick = { timerTab = value }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (timerTab == value) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text(value) }
                 }
             }
+        }
+        if (timerTab == "Alarms") {
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("Planned alarms", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("${enabledStandaloneAlarms.size + alarms.size} active", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Button(onClick = { openAlarmEditor(null) }) { Text("Add alarm") }
+                }
+            }
+            if (!platformActions.canScheduleExactAlarms()) item {
+                Text("Exact alarm access is off. Enable Alarms & reminders in Android settings for dependable delivery.", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+            }
+            if (enabledStandaloneAlarms.isEmpty() && alarms.isEmpty()) item { Text("No active or planned alarms.") }
         }
         if (timerTab == "Timers") item {
             Text("Quick timers", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -2401,6 +2783,14 @@ private fun TimerScreen(
                 }
             }
             OutlinedButton(onClick = { editingPreset = null; timerName = ""; showCustomTimer = true }, modifier = Modifier.fillMaxWidth()) { Text("Custom") }
+            OutlinedButton(
+                enabled = active == null,
+                onClick = {
+                    val started = currentTimeMillis()
+                    onSaveTimer(ActiveTimer(taskId = selectedTaskId, mode = TimerMode.STOPWATCH, state = TimerState.RUNNING, startedAt = started))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Start stopwatch") }
         }
         if (timerTab == "Timers" && presets.any { it.isFavorite }) item {
             Text("Favorite presets", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -2413,7 +2803,7 @@ private fun TimerScreen(
                         DropdownMenuItem(text = { Text("Move up") }, onClick = { onSavePreset(preset.copy(manualOrder = (preset.manualOrder - 1).coerceAtLeast(0), updatedAt = currentTimeMillis())); presetMenuId = null })
                         DropdownMenuItem(text = { Text("Move down") }, onClick = { onSavePreset(preset.copy(manualOrder = preset.manualOrder + 1, updatedAt = currentTimeMillis())); presetMenuId = null })
                         DropdownMenuItem(text = { Text("Duplicate") }, onClick = { onSavePreset(preset.copy(id = 0, name = "${preset.name} copy", manualOrder = presets.size.toLong(), createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())); presetMenuId = null })
-                        DropdownMenuItem(text = { Text("Delete") }, onClick = { onDeletePreset(preset); presetMenuId = null })
+                        DropdownMenuItem(text = { Text("Delete") }, onClick = { presetPendingDelete = preset; presetMenuId = null })
                     } }
                 }
             }
@@ -2424,17 +2814,13 @@ private fun TimerScreen(
                 val durationMinutes = recent.originalDurationMillis / 60_000L
                 val isGenericQuickTimer = durationMinutes in quickTimerMinutes && recent.name == "$durationMinutes-minute timer"
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }} · ${recent.result.lowercase()} · ${formatAlarmTime(recent.endedAt)}", modifier = Modifier.weight(1f))
+                    Text("${recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }} · ${recent.result.lowercase()} · ${formatLocalAlarmDateTime(recent.endedAt, platformActions)}", modifier = Modifier.weight(1f))
                     if (!isGenericQuickTimer) TextButton(onClick = { onStartStandaloneTimer(recent.name, recent.originalDurationMillis) }) { Text("Start again") }
                     if (!isGenericQuickTimer && presets.none { it.durationSeconds * 1000L == recent.originalDurationMillis && it.name == recent.name }) TextButton(onClick = { onSavePreset(com.geepscontrol.core.database.TimerPresetEntity(name = recent.name.ifBlank { formatDuration(recent.originalDurationMillis) }, durationSeconds = recent.originalDurationMillis / 1000L, isFavorite = true, manualOrder = presets.size.toLong(), createdAt = currentTimeMillis(), updatedAt = currentTimeMillis())) }) { Text("Save") }
                 }
             }
         }
-        if (timerTab == "Alarms") item {
-            Text("Alarm controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            OutlinedButton(onClick = { showProfileManager = true }, modifier = Modifier.fillMaxWidth()) { Text("Manage alarm profiles") }
-        }
-        if ((timerTab == "Timers" && runningStandalone.isNotEmpty()) || (timerTab == "Alarms" && enabledStandaloneAlarms.isNotEmpty())) item { Text("Active", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        if (timerTab == "Timers" && runningStandalone.isNotEmpty()) item { Text("Active", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         if (timerTab == "Timers") items(runningStandalone, key = { "running-timer-${it.id}" }) { timer ->
             val elapsed = (tick - timer.startedAt).coerceAtLeast(0)
             val remaining = (timer.durationMillis - elapsed).coerceAtLeast(0)
@@ -2445,19 +2831,70 @@ private fun TimerScreen(
                         Text("${formatDuration(remaining)} remaining")
                     }
                     OutlinedButton(onClick = { onToggleStandaloneTimer(timer) }) { Text("Disable") }
-                    TextButton(onClick = { onDeleteStandaloneTimer(timer) }) { Text("\uD83D\uDDD1") }
+                    TextButton(onClick = { timerPendingDelete = timer }) { Text("Delete") }
                 }
             }
         }
-        if (timerTab == "Alarms") items(enabledStandaloneAlarms, key = { "enabled-alarm-${it.id}" }) { alarm ->
+        if (timerTab == "Alarms") items(
+            enabledStandaloneAlarms.sortedWith(
+                compareBy<StandaloneAlarmEntity> { platformActions.localMinutesOfDay(it.scheduledAt) }
+                    .thenBy { it.scheduledAt },
+            ),
+            key = { "enabled-alarm-${it.id}" },
+        ) { alarm ->
             Card(Modifier.fillMaxWidth().clickable { openAlarmEditor(alarm) }, colors = CardDefaults.cardColors(containerColor = activeAlarmColor(alarm.scheduledAt, tick))) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(alarm.label, fontWeight = FontWeight.SemiBold)
-                        Text(formatAlarmTime(alarm.scheduledAt) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(alarm.label.ifBlank { "Alarm" }, fontWeight = FontWeight.SemiBold)
+                            Text("Active", color = Color(0xff43a047), fontWeight = FontWeight.SemiBold)
+                        }
+                        Text(formatLocalAlarmDateTime(alarm.scheduledAt, platformActions) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
                     }
                     OutlinedButton(onClick = { onToggleStandaloneAlarm(alarm) }) { Text("Disable") }
-                    TextButton(onClick = { onDeleteStandaloneAlarm(alarm) }) { Text("\uD83D\uDDD1") }
+                    TextButton(onClick = { alarmPendingDelete = alarm }) { Text("Delete") }
+                }
+            }
+        }
+        if (timerTab == "Alarms") items(alarms.sortedBy { it.triggerAt }, key = { "legacy-alarm-${it.id}" }) { alarm ->
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = activeAlarmColor(alarm.triggerAt, tick))) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(alarm.label, fontWeight = FontWeight.SemiBold)
+                        Text(formatLocalAlarmDateTime(alarm.triggerAt, platformActions) + alarm.taskId?.let { taskId -> tasks.firstOrNull { it.id == taskId }?.title }?.let { " · $it" }.orEmpty())
+                    }
+                    OutlinedButton(onClick = { onDismissAlarm(alarm) }) { Text("Disable") }
+                }
+            }
+        }
+        if (timerTab == "Alarms" && todayAlarmHistory.isNotEmpty()) {
+            item { Text("Earlier today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(todayAlarmHistory, key = { "alarm-history-${it.id}" }) { alarm ->
+                val triggeredAt = alarm.lastTriggeredAt?.takeIf(::occurredToday)
+                val dismissedAt = alarm.lastDismissedAt?.takeIf(::occurredToday)
+                val acknowledged = dismissedAt != null && (triggeredAt == null || dismissedAt >= triggeredAt)
+                Card(Modifier.fillMaxWidth().clickable { openAlarmEditor(alarm) }) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(alarm.label.ifBlank { "Alarm" }, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(
+                                when {
+                                    acknowledged -> "Acknowledged at ${formatAlarmClock(dismissedAt!!, platformActions)}"
+                                    triggeredAt != null -> "Not acknowledged"
+                                    else -> "Acknowledged"
+                                },
+                                color = if (acknowledged) Color(0xff43a047) else MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        Text(
+                            when {
+                                triggeredAt != null -> "Went off ${formatAlarmClock(triggeredAt, platformActions)}"
+                                else -> "Scheduled for ${formatAlarmClock(alarm.scheduledAt, platformActions)}"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
         }
@@ -2495,7 +2932,9 @@ private fun TimerScreen(
                 }
             }
         }
-        if ((timerTab == "Timers" && inactiveStandalone.isNotEmpty()) || (timerTab == "Alarms" && disabledStandaloneAlarms.isNotEmpty())) item { Text("Disabled", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        if ((timerTab == "Timers" && inactiveStandalone.isNotEmpty()) || (timerTab == "Alarms" && otherStandaloneAlarms.isNotEmpty())) {
+            item { Text(if (timerTab == "Alarms") "Other alarms" else "Disabled", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        }
         if (timerTab == "Timers") items(inactiveStandalone, key = { "inactive-timer-${it.id}" }) { timer ->
             Card(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -2504,38 +2943,61 @@ private fun TimerScreen(
                         Text("${formatDuration(timer.durationMillis)} timer · ${timer.state.lowercase()}")
                     }
                     OutlinedButton(onClick = { onToggleStandaloneTimer(timer) }) { Text("Enable") }
-                    TextButton(onClick = { onDeleteStandaloneTimer(timer) }) { Text("\uD83D\uDDD1") }
+                    TextButton(onClick = { timerPendingDelete = timer }) { Text("Delete") }
                 }
             }
         }
-        if (timerTab == "Alarms") items(disabledStandaloneAlarms, key = { "disabled-alarm-${it.id}" }) { alarm ->
+        if (timerTab == "Alarms") items(otherStandaloneAlarms, key = { "other-alarm-${it.id}" }) { alarm ->
             Card(Modifier.fillMaxWidth().clickable { openAlarmEditor(alarm) }) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(alarm.label, fontWeight = FontWeight.SemiBold)
-                        Text(formatAlarmTime(alarm.scheduledAt) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(alarm.label.ifBlank { "Alarm" }, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (alarm.enabled) "Missed · enabled" else "Off",
+                                color = if (alarm.enabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        Text(formatLocalAlarmDateTime(alarm.scheduledAt, platformActions) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
                     }
-                    OutlinedButton(onClick = { onToggleStandaloneAlarm(alarm) }) { Text("Enable") }
-                    TextButton(onClick = { onDeleteStandaloneAlarm(alarm) }) { Text("\uD83D\uDDD1") }
+                    OutlinedButton(onClick = { onToggleStandaloneAlarm(alarm) }) { Text(if (alarm.enabled) "Disable" else "Enable") }
+                    TextButton(onClick = { alarmPendingDelete = alarm }) { Text("Delete") }
                 }
             }
         }
-    }
-        Surface(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(), tonalElevation = 6.dp, shadowElevation = 8.dp) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
-                    enabled = active == null,
-                    onClick = {
-                        val started = currentTimeMillis()
-                        onSaveTimer(ActiveTimer(taskId = selectedTaskId, mode = TimerMode.STOPWATCH, state = TimerState.RUNNING, startedAt = started))
-                    },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Stopwatch") }
-                Button(onClick = { timerName = ""; showCustomTimer = true }, modifier = Modifier.weight(1f)) { Text("Add Timer") }
-                Button(onClick = { openAlarmEditor(null) }, modifier = Modifier.weight(1f)) { Text("Add Alarm") }
-            }
+        if (timerTab == "Alarms") item {
+            Text("Alarm settings", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = { showProfileManager = true }, modifier = Modifier.fillMaxWidth()) { Text("Manage alarm profiles") }
         }
     }
+    DeleteItemDialog(
+        itemName = presetPendingDelete?.name.orEmpty(),
+        visible = presetPendingDelete != null,
+        onDismiss = { presetPendingDelete = null },
+        onConfirm = {
+            presetPendingDelete?.let(onDeletePreset)
+            presetPendingDelete = null
+        },
+    )
+    DeleteItemDialog(
+        itemName = timerPendingDelete?.name?.ifBlank { "Timer" }.orEmpty(),
+        visible = timerPendingDelete != null,
+        onDismiss = { timerPendingDelete = null },
+        onConfirm = {
+            timerPendingDelete?.let(onDeleteStandaloneTimer)
+            timerPendingDelete = null
+        },
+    )
+    DeleteItemDialog(
+        itemName = alarmPendingDelete?.label.orEmpty(),
+        visible = alarmPendingDelete != null,
+        onDismiss = { alarmPendingDelete = null },
+        onConfirm = {
+            alarmPendingDelete?.let(onDeleteStandaloneAlarm)
+            alarmPendingDelete = null
+        },
+    )
     if (showCustomTimer) {
         AlertDialog(
             onDismissRequest = { showCustomTimer = false },
@@ -2582,8 +3044,13 @@ private fun TimerScreen(
         )
     }
     if (showAlarmEditor) {
+        val selectedAlarmHour = (alarmHour.toIntOrNull() ?: 7).coerceIn(0, 23)
+        val selectedAlarmMinute = (alarmMinute.toIntOrNull() ?: 0).coerceIn(0, 59)
+        val selectedAlarmAt = platformActions.localDateTimeToEpoch(alarmDate, selectedAlarmHour, selectedAlarmMinute)
+        val alarmTimeIsFuture = selectedAlarmAt > currentTimeMillis()
         AlertDialog(
             onDismissRequest = { showAlarmEditor = false },
+            modifier = Modifier.fillMaxSize(),
             title = { Text(if (editingAlarm == null) "New alarm" else "Edit alarm") },
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2594,16 +3061,15 @@ private fun TimerScreen(
                         }
                     }
                     item { OutlinedButton(onClick = { showAlarmDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text(formatDate(alarmDate)) } }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(alarmHour, { alarmHour = it.filter(Char::isDigit).take(2) }, label = { Text("Hour (0–23)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                            OutlinedTextField(alarmMinute, { alarmMinute = it.filter(Char::isDigit).take(2) }, label = { Text("Minute") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        }
+                    item { OutlinedButton(onClick = { showAlarmTimePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Time: ${formatClockTime(selectedAlarmHour, selectedAlarmMinute)}") } }
+                    if (!alarmTimeIsFuture) {
+                        item { Text("Choose a future date and time.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     }
                     item { SelectorField("Repeat", listOf("Once", "Weekly", "Bi-weekly", "Monthly", "Custom"), alarmRepeat, { it }, { alarmRepeat = it }, Modifier.fillMaxWidth()) }
-                    item { Text("Alarm behavior", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
-                    item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(alarmSound, { alarmSound = it }); Text("Sound", modifier = Modifier.padding(start = 8.dp)) } }
-                    if (alarmSound) {
+                    item { OutlinedButton(onClick = { showAlarmAdvanced = !showAlarmAdvanced }, modifier = Modifier.fillMaxWidth()) { Text(if (showAlarmAdvanced) "Hide advanced alarm options" else "Advanced alarm options") } }
+                    if (showAlarmAdvanced) item { Text("Alarm behavior", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
+                    if (showAlarmAdvanced) item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(alarmSound, { alarmSound = it }); Text("Sound", modifier = Modifier.padding(start = 8.dp)) } }
+                    if (showAlarmAdvanced && alarmSound) {
                         item { SelectorField("Sound", bundledAlarmSounds, bundledAlarmSounds.firstOrNull { it.id == alarmSoundId } ?: bundledAlarmSounds.first(), { it.name }, { alarmSoundId = it.id }, Modifier.fillMaxWidth()) }
                         item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedButton(onClick = { platformActions.previewAlarmSound(alarmSoundId) }, modifier = Modifier.weight(1f)) { Text("Preview") }; OutlinedButton(onClick = platformActions::stopAlarmSoundPreview, modifier = Modifier.weight(1f)) { Text("Stop") } } }
                         item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(alarmLoopSound, { alarmLoopSound = it }); Text("Repeat sound until acknowledged", modifier = Modifier.padding(start = 8.dp)) } }
@@ -2611,11 +3077,11 @@ private fun TimerScreen(
                         item { Text("Maximum volume: $alarmMaxVolume%"); Slider(alarmMaxVolume.toFloat(), { alarmMaxVolume = it.toInt().coerceAtLeast(alarmStartVolume) }, valueRange = 0f..100f, steps = 9) }
                         item { Text("Volume ramp: ${alarmVolumeRamp}s"); Slider(alarmVolumeRamp.toFloat(), { alarmVolumeRamp = it.toInt() }, valueRange = 0f..300f, steps = 9) }
                     }
-                    item { SelectorField("Vibration", listOf("OFF", "LIGHT", "STANDARD", "STRONG", "ESCALATING", "CONTINUOUS"), alarmVibrationMode, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmVibrationMode = it }, Modifier.fillMaxWidth()) }
-                    if (alarmVibrationMode != "OFF") item { Text("Vibration delay: ${alarmVibrationDelay}s"); Slider(alarmVibrationDelay.toFloat(), { alarmVibrationDelay = it.toInt() }, valueRange = 0f..120f, steps = 11) }
-                    item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedTextField(alarmSnoozeMinutes, { alarmSnoozeMinutes = it.filter(Char::isDigit) }, label = { Text("Snooze min") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(alarmMaximumSnoozes, { alarmMaximumSnoozes = it.filter(Char::isDigit) }, label = { Text("Max (0 unlimited)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) } }
-                    item { SelectorField("End condition", listOf("STANDARD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC", "HOLD"), alarmDismissalMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalMethod = it }, Modifier.fillMaxWidth()) }
-                    if (alarmDismissalMethod != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), alarmDismissalDifficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalDifficulty = it }, Modifier.fillMaxWidth()) }
+                    if (showAlarmAdvanced) item { SelectorField("Vibration", listOf("OFF", "LIGHT", "STANDARD", "STRONG", "ESCALATING", "CONTINUOUS"), alarmVibrationMode, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmVibrationMode = it }, Modifier.fillMaxWidth()) }
+                    if (showAlarmAdvanced && alarmVibrationMode != "OFF") item { Text("Vibration delay: ${alarmVibrationDelay}s"); Slider(alarmVibrationDelay.toFloat(), { alarmVibrationDelay = it.toInt() }, valueRange = 0f..120f, steps = 11) }
+                    if (showAlarmAdvanced) item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedTextField(alarmSnoozeMinutes, { alarmSnoozeMinutes = it.filter(Char::isDigit) }, label = { Text("Snooze min") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(alarmMaximumSnoozes, { alarmMaximumSnoozes = it.filter(Char::isDigit) }, label = { Text("Max (0 unlimited)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) } }
+                    if (showAlarmAdvanced) item { SelectorField("End condition", listOf("STANDARD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC", "HOLD"), alarmDismissalMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalMethod = it }, Modifier.fillMaxWidth()) }
+                    if (showAlarmAdvanced && alarmDismissalMethod != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), alarmDismissalDifficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalDifficulty = it }, Modifier.fillMaxWidth()) }
                     if (alarmRepeat in setOf("Weekly", "Bi-weekly") || (alarmRepeat == "Custom" && alarmUnit == AlarmRepeatUnit.WEEK)) {
                         item { Text("Days of the week", fontWeight = FontWeight.SemiBold) }
                         listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").chunked(3).forEachIndexed { rowIndex, names ->
@@ -2641,7 +3107,7 @@ private fun TimerScreen(
                 }
             },
             confirmButton = {
-                Button(enabled = alarmLabel.isNotBlank(), onClick = {
+                Button(onClick = {
                     val interval = (alarmInterval.toIntOrNull() ?: 1).coerceAtLeast(1)
                     val rule = when (alarmRepeat) {
                         "Weekly" -> AlarmRepeatRule(1, AlarmRepeatUnit.WEEK, alarmWeekdays)
@@ -2651,15 +3117,14 @@ private fun TimerScreen(
                         else -> null
                     }
                     val now = currentTimeMillis()
-                    val scheduled = alarmDate + (alarmHour.toIntOrNull() ?: 7).coerceIn(0, 23) * 3_600_000L + (alarmMinute.toIntOrNull() ?: 0).coerceIn(0, 59) * 60_000L
                     val previous = editingAlarm
                     onSaveStandaloneAlarm(
                         StandaloneAlarmEntity(
                             id = previous?.id ?: 0,
-                            label = alarmLabel.trim(),
-                            scheduledAt = scheduled,
+                            label = alarmLabel.trim().ifBlank { "Alarm" },
+                            scheduledAt = selectedAlarmAt,
                             recurrenceRule = rule?.encode(),
-                            enabled = previous?.enabled ?: true,
+                            enabled = true,
                             sound = alarmSound,
                             vibration = alarmVibrationMode != "OFF",
                             snoozeMinutes = (alarmSnoozeMinutes.toIntOrNull() ?: 8).coerceAtLeast(1),
@@ -2675,8 +3140,8 @@ private fun TimerScreen(
                             maximumSnoozes = (alarmMaximumSnoozes.toIntOrNull() ?: 0).coerceAtLeast(0),
                             dismissalMethod = alarmDismissalMethod,
                             dismissalDifficulty = alarmDismissalDifficulty,
-                            localHour = (alarmHour.toIntOrNull() ?: 7).coerceIn(0, 23),
-                            localMinute = (alarmMinute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                            localHour = selectedAlarmHour,
+                            localMinute = selectedAlarmMinute,
                             localEpochDay = dayKey(alarmDate),
                             associatedType = previous?.associatedType,
                             associatedId = previous?.associatedId,
@@ -2688,7 +3153,7 @@ private fun TimerScreen(
                     )
                     platformActions.stopAlarmSoundPreview()
                     showAlarmEditor = false
-                }) { Text("Save alarm") }
+                }, enabled = alarmTimeIsFuture) { Text("Save alarm") }
             },
             dismissButton = { TextButton(onClick = { showAlarmEditor = false }) { Text("Cancel") } },
         )
@@ -2696,6 +3161,27 @@ private fun TimerScreen(
     if (showAlarmDatePicker) {
         val picker = rememberDatePickerState(initialSelectedDateMillis = alarmDate)
         DatePickerDialog(onDismissRequest = { showAlarmDatePicker = false }, confirmButton = { TextButton(onClick = { alarmDate = picker.selectedDateMillis ?: alarmDate; showAlarmDatePicker = false }) { Text("Set date") } }, dismissButton = { TextButton(onClick = { showAlarmDatePicker = false }) { Text("Cancel") } }) { DatePicker(picker) }
+    }
+    if (showAlarmTimePicker) {
+        val picker =
+            rememberTimePickerState(
+                initialHour = (alarmHour.toIntOrNull() ?: 7).coerceIn(0, 23),
+                initialMinute = (alarmMinute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                is24Hour = false,
+            )
+        AlertDialog(
+            onDismissRequest = { showAlarmTimePicker = false },
+            title = { Text("Choose alarm time") },
+            text = { TimePicker(state = picker) },
+            confirmButton = {
+                Button(onClick = {
+                    alarmHour = picker.hour.toString()
+                    alarmMinute = picker.minute.toString().padStart(2, '0')
+                    showAlarmTimePicker = false
+                }) { Text("Set time") }
+            },
+            dismissButton = { TextButton(onClick = { showAlarmTimePicker = false }) { Text("Cancel") } },
+        )
     }
     if (showProfilePicker) {
         AlertDialog(
@@ -2770,29 +3256,40 @@ private fun UnifiedTodayScreen(
     tasks: List<Task>,
     plan: List<DailyPlanItem>,
     projects: List<Project>,
+    platformActions: PlatformActions,
     onEdit: (Task) -> Unit,
     onCompleteTask: (Task) -> Unit,
     onSavePlan: (DailyPlanItem) -> Unit,
     onRemove: (Long) -> Unit,
     onOpenTimeline: (TimelineItem) -> Unit,
     onDoneTimeline: (TimelineItem) -> Unit,
+    onOpenMedications: () -> Unit,
     padding: PaddingValues,
 ) {
-    var hideFinished by remember { mutableStateOf(false) }
+    var showCompleted by remember { mutableStateOf(false) }
+    var showSupporting by remember { mutableStateOf(false) }
+    var showTaskPicker by remember { mutableStateOf(false) }
     val now = currentTimeMillis()
-    val todayStart = dayKey(now) * DAY_MILLIS
-    val todayEnd = todayStart + DAY_MILLIS
+    val todayMarker = platformActions.localDateEpochMillis(now)
+    val todayStart = platformActions.localDateTimeToEpoch(todayMarker, 0, 0)
+    val todayEnd = platformActions.localDateTimeToEpoch(todayMarker + DAY_MILLIS, 0, 0)
     fun overlaps(start: Long?, end: Long?, rangeStart: Long, rangeEnd: Long): Boolean =
         start != null && start < rangeEnd && (end ?: (start + 1)) > rangeStart
-    val visible = timeline.filter { (it.startAt == null || overlaps(it.startAt, it.endAt, todayStart, todayEnd) || (it.actionable && it.startAt < todayStart)) && (!hideFinished || it.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")) }
-    val timedVisible = visible.filterNot { it.allDay }
+    val visible = timeline.filter { it.startAt == null || overlaps(it.startAt, it.endAt, todayStart, todayEnd) || (it.actionable && it.startAt < todayStart) }
+    val supportingTypes = setOf(TimelineItemType.ALARM, TimelineItemType.TIMER)
+    val supportingItems = visible.filter { it.type in supportingTypes }
+    val plannedIds = plan.mapTo(mutableSetOf()) { it.taskId }
+    val focusVisible = visible.filterNot { it.type in supportingTypes || (it.type == TimelineItemType.TASK && it.id in plannedIds) }
+    val finishedStatuses = setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")
+    val activeFocusVisible = focusVisible.filter { it.status !in finishedStatuses }
+    val timedVisible = activeFocusVisible.filterNot { it.allDay }
     val nowItems = timedVisible.filter { it.type == com.geepscontrol.core.domain.TimelineItemType.TIMER || overlaps(it.startAt, it.endAt, now, now + 1) }
     val upcoming = timedVisible.filter { it.startAt in (now + 1) until todayEnd }
     val earlier = timedVisible.filter { !it.actionable && it.startAt != null && it.startAt < now && it !in nowItems }
-    val anytime = visible.filter { it.startAt == null || it.allDay }
-    val overdue = visible.filter { it.type != TimelineItemType.TIMER && it.actionable && it.startAt != null && it.startAt < todayStart && it.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN") }
-    val completed = visible.filter { it.status in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED") }
-    val calendarEventsToday = visible.filter { it.type == TimelineItemType.EVENT && it.status == "CALENDAR" }
+    val overdue = activeFocusVisible.filter { it.actionable && it.startAt != null && it.startAt < now && it.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN", "SNOOZED") }
+    val anytime = activeFocusVisible.filter { (it.startAt == null || it.allDay) && it !in overdue }
+    val completed = focusVisible.filter { it.status in finishedStatuses }
+    val remainingCalendarEventsToday = visible.filter { it.type == TimelineItemType.EVENT && it.status == "CALENDAR" && (it.endAt ?: it.startAt ?: 0L) >= now }
     val nextCalendarEvents = timeline
         .asSequence()
         .filter { it.type == TimelineItemType.EVENT && it.status == "CALENDAR" && it.startAt != null && it.startAt >= todayEnd }
@@ -2801,18 +3298,21 @@ private fun UnifiedTodayScreen(
         .take(3)
         .toList()
     val conflicts = com.geepscontrol.core.domain.UnifiedTimelineService::class.let { visible.filter { it.endAt != null && it.startAt != null }.flatMapIndexed { index, first -> visible.drop(index + 1).filter { second -> second.endAt != null && second.startAt != null && first.startAt!! < second.endAt!! && second.startAt < first.endAt!! }.map { first to it } } }
-    val plannedIds = plan.mapTo(mutableSetOf()) { it.taskId }
+    val timelineTaskIds = visible.filter { it.type == TimelineItemType.TASK }.mapTo(mutableSetOf()) { it.id }
     val openTasks = tasks.filter { it.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED) }
+    fun taskColor(task: Task): Color = projects.firstOrNull { it.id == task.projectId }?.let { Color(it.colorArgb) } ?: priorityColor(task.priority)
+    fun timelineColor(row: TimelineItem): Color =
+        if (row.type == TimelineItemType.TASK) tasks.firstOrNull { it.id == row.id }?.let(::taskColor) ?: priorityColor(Priority.NORMAL)
+        else todayTypeColor(row.type)
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
-        item { Text("Today timeline", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(hideFinished, { hideFinished = it })
-                Text("Hide completed or confirmed", modifier = Modifier.padding(start = 8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Today timeline", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = onOpenMedications) { Text("Medications") }
             }
         }
         if (conflicts.isNotEmpty()) item { Text("${conflicts.size} overlapping scheduled item(s)", color = MaterialTheme.colorScheme.error) }
@@ -2825,31 +3325,50 @@ private fun UnifiedTodayScreen(
             if (rows.isNotEmpty()) item { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             items(rows.distinctBy { it.type to it.id }, key = { "timeline-$title-${it.type}-${it.id}" }) { row ->
                 val isOverdue = row.actionable && row.startAt != null && row.startAt < todayStart && row.status !in setOf("COMPLETED", "TAKEN", "DISMISSED", "SKIPPED", "CANCELLED")
-                Card(Modifier.fillMaxWidth().clickable { onOpenTimeline(row) }) {
-                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Column(Modifier.weight(1f)) {
-                            Text(row.title, fontWeight = FontWeight.SemiBold)
+                val canComplete = row.actionable && row.status in setOf("PENDING", "DUE", "SCHEDULED", "OPEN", "SNOOZED")
+                val categoryColor = timelineColor(row)
+                Card(Modifier.fillMaxWidth().clickable { onOpenTimeline(row) }, colors = CardDefaults.cardColors(containerColor = categoryColor.copy(alpha = 0.22f))) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(row.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(todayTypeIcon(row.type), modifier = Modifier.semantics { contentDescription = row.type.displayName() }, fontSize = 18.sp)
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(Modifier.weight(1f)) {
                             Text("${row.type.name.lowercase().replace('_', ' ')} · ${row.status.lowercase()}${row.subtitle.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}${row.timezone?.let { " · $it" }.orEmpty()}")
                             if (isOverdue) Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            }
+                            if (canComplete) Button(onClick = { onDoneTimeline(row) }, modifier = Modifier.padding(top = 4.dp)) { Text(timelineDoneLabel(row.type)) }
                         }
-                        if (isOverdue) Button(onClick = { onDoneTimeline(row) }) { Text("Done") }
                     }
                 }
             }
         }
         timelineSection("Now", nowItems)
-        timelineSection("Upcoming", upcoming)
-        timelineSection("Earlier today", earlier)
-        timelineSection("Anytime today", anytime)
         timelineSection("Overdue action items", overdue)
-        timelineSection("Completed or confirmed", completed)
-        if (calendarEventsToday.isEmpty() && nextCalendarEvents.isNotEmpty()) {
+        timelineSection("Upcoming", upcoming)
+        timelineSection("Anytime today", anytime)
+        timelineSection("Earlier today", earlier)
+        if (completed.isNotEmpty()) {
+            item {
+                OutlinedButton(onClick = { showCompleted = !showCompleted }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (showCompleted) "Hide completed or confirmed (${completed.size})" else "Show completed or confirmed (${completed.size})")
+                }
+            }
+            if (showCompleted) timelineSection("Completed or confirmed", completed)
+        }
+        if (remainingCalendarEventsToday.isEmpty() && nextCalendarEvents.isNotEmpty()) {
             item { Text("Next calendar events", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             items(nextCalendarEvents, key = { "next-calendar-${it.sourceId}-${it.id}" }) { row ->
-                Card(Modifier.fillMaxWidth().clickable { onOpenTimeline(row) }) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(row.title, fontWeight = FontWeight.SemiBold)
-                        Text("${formatDate(row.startAt!!)}${row.subtitle.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                Card(Modifier.fillMaxWidth().clickable { onOpenTimeline(row) }, colors = CardDefaults.cardColors(containerColor = todayTypeColor(TimelineItemType.EVENT).copy(alpha = 0.22f))) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(row.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                Text(todayTypeIcon(TimelineItemType.EVENT), modifier = Modifier.semantics { contentDescription = "Event" }, fontSize = 18.sp)
+                            }
+                            Text("${formatLocalDate(row.startAt!!, platformActions)}${row.subtitle.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
@@ -2858,31 +3377,51 @@ private fun UnifiedTodayScreen(
         if (plan.isEmpty()) item { Text("Choose tasks below to add them to today.") }
         items(plan, key = { "planned-${it.taskId}" }) { item ->
             tasks.firstOrNull { it.id == item.taskId }?.let { task ->
-                Card(Modifier.fillMaxWidth().clickable { onEdit(task) }) {
+                Card(Modifier.fillMaxWidth().clickable { onEdit(task) }, colors = CardDefaults.cardColors(containerColor = taskColor(task).copy(alpha = 0.22f))) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val isOverdue = task.dueAt != null && task.dueAt < now && task.status !in setOf(TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.ARCHIVED)
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Column(Modifier.weight(1f)) {
-                                Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onEdit(task) })
-                                if (isOverdue) Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                            }
-                            if (isOverdue) Button(onClick = { onCompleteTask(task) }) { Text("Done") }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).clickable { onEdit(task) })
+                            Text(todayTypeIcon(TimelineItemType.TASK), modifier = Modifier.semantics { contentDescription = "Task" }, fontSize = 18.sp)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            (1..0).forEach { rank ->
-                                OutlinedButton(onClick = { onSavePlan(item.copy(topRank = if (item.topRank == rank) null else rank)) }) { Text(if (item.topRank == rank) "Top $rank ✓" else "Top $rank") }
-                            }
-                            TextButton(onClick = { onRemove(task.id) }) { Text("Remove from today") }
+                        Text(
+                            listOfNotNull(projects.firstOrNull { it.id == task.projectId }?.name, task.priority.displayName(), task.estimatedMinutes?.let { "$it min" }).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            if (isOverdue) Text("Overdue!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            else Text(task.status.displayName(), style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = { onCompleteTask(task) }) { Text("Done") }
                         }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            (1..3).forEach { rank ->
+                                OutlinedButton(onClick = { onSavePlan(item.copy(topRank = if (item.topRank == rank) null else rank)) }, modifier = Modifier.weight(1f)) { Text(if (item.topRank == rank) "Top $rank ✓" else "Top $rank") }
+                            }
+                        }
+                        TextButton(onClick = { onRemove(task.id) }) { Text("Remove from today") }
                     }
                 }
             }
         }
-        item { Text("Add to today", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
-        items(openTasks.filterNot { it.id in plannedIds }, key = { "available-${it.id}" }) { task ->
+        if (supportingItems.isNotEmpty()) {
+            item {
+                OutlinedButton(onClick = { showSupporting = !showSupporting }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (showSupporting) "Hide alarms & timers (${supportingItems.size})" else "Show alarms & timers (${supportingItems.size})")
+                }
+            }
+            if (showSupporting) timelineSection("Alarms & timers", supportingItems)
+        }
+        val availableTasks = openTasks.filterNot { it.id in plannedIds || it.id in timelineTaskIds }
+        item {
+            OutlinedButton(onClick = { showTaskPicker = !showTaskPicker }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showTaskPicker) "Hide task picker" else "Add a task to today (${availableTasks.size})")
+            }
+        }
+        if (showTaskPicker) items(availableTasks, key = { "available-${it.id}" }) { task ->
             OutlinedButton(
-                onClick = { onSavePlan(DailyPlanItem(task.id, dayKey(currentTimeMillis()))) },
+                onClick = { onSavePlan(DailyPlanItem(task.id, platformActions.localEpochDay(currentTimeMillis()))) },
                 modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(containerColor = taskColor(task).copy(alpha = 0.16f)),
             ) { Text("+ ${task.title}${projects.firstOrNull { it.id == task.projectId }?.let { " · ${it.name}" }.orEmpty()}") }
         }
     }
@@ -2892,14 +3431,18 @@ private fun UnifiedTodayScreen(
 private fun UpcomingScreen(
     timeline: List<TimelineItem>,
     now: Long,
+    platformActions: PlatformActions,
+    onOpen: (TimelineItem) -> Unit,
     padding: PaddingValues,
 ) {
     var filter by remember { mutableStateOf<com.geepscontrol.core.domain.TimelineItemType?>(null) }
-    val tomorrowStart = (dayKey(now) + 1) * DAY_MILLIS
-    val weekEnd = tomorrowStart + 7 * DAY_MILLIS
+    val todayMarker = platformActions.localDateEpochMillis(now)
+    val tomorrowStart = platformActions.localDateTimeToEpoch(todayMarker + DAY_MILLIS, 0, 0)
+    val dayAfterTomorrowStart = platformActions.localDateTimeToEpoch(todayMarker + 2 * DAY_MILLIS, 0, 0)
+    val weekEnd = platformActions.localDateTimeToEpoch(todayMarker + 8 * DAY_MILLIS, 0, 0)
     val filtered = timeline.filter { filter == null || it.type == filter }
-    val tomorrow = filtered.filter { it.startAt in tomorrowStart until tomorrowStart + DAY_MILLIS }
-    val nextSeven = filtered.filter { it.startAt in tomorrowStart + DAY_MILLIS until weekEnd }
+    val tomorrow = filtered.filter { it.startAt in tomorrowStart until dayAfterTomorrowStart }
+    val nextSeven = filtered.filter { it.startAt in dayAfterTomorrowStart until weekEnd }
     val later = filtered.filter { it.startAt != null && it.startAt >= weekEnd }
     val unscheduled = filtered.filter { it.startAt == null }
     LazyColumn(
@@ -2912,12 +3455,12 @@ private fun UpcomingScreen(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(null, com.geepscontrol.core.domain.TimelineItemType.TASK, com.geepscontrol.core.domain.TimelineItemType.REMINDER, com.geepscontrol.core.domain.TimelineItemType.EVENT).forEach { value ->
-                        OutlinedButton(onClick = { filter = value }) { Text(if (value == null) "All" else value.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        OutlinedButton(onClick = { filter = value }, colors = ButtonDefaults.outlinedButtonColors(containerColor = if (filter == value) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text(if (value == null) "All" else value.name.lowercase().replaceFirstChar { it.uppercase() }) }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(com.geepscontrol.core.domain.TimelineItemType.ROUTINE, com.geepscontrol.core.domain.TimelineItemType.MEDICATION, com.geepscontrol.core.domain.TimelineItemType.ALARM, com.geepscontrol.core.domain.TimelineItemType.ITINERARY).forEach { value ->
-                        OutlinedButton(onClick = { filter = value }) { Text(value.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        OutlinedButton(onClick = { filter = value }, colors = ButtonDefaults.outlinedButtonColors(containerColor = if (filter == value) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text(value.name.lowercase().replaceFirstChar { it.uppercase() }) }
                     }
                 }
             }
@@ -2930,10 +3473,10 @@ private fun UpcomingScreen(
             item { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             if (rows.isEmpty()) item { Text("Nothing here", style = MaterialTheme.typography.bodySmall) }
             items(rows, key = { "upcoming-$title-${it.type}-${it.id}" }) { row ->
-                Card(Modifier.fillMaxWidth()) {
+                Card(Modifier.fillMaxWidth().clickable { onOpen(row) }) {
                     Column(Modifier.padding(12.dp)) {
                         Text(row.title, fontWeight = FontWeight.SemiBold)
-                        Text("${row.type.name.lowercase()} · ${row.status.lowercase()}${row.timezone?.let { " · $it" }.orEmpty()}")
+                        Text("${row.type.name.lowercase()} · ${row.status.lowercase()}${row.startAt?.let { " · ${formatLocalAlarmDateTime(it, platformActions)}" }.orEmpty()}${row.timezone?.let { " · $it" }.orEmpty()}")
                     }
                 }
             }
@@ -2959,46 +3502,85 @@ private fun LifeItemsScreen(
     presets: List<com.geepscontrol.core.database.TimerPresetEntity>,
     initialType: String,
     showAddInitially: Boolean,
+    initialEditSourceId: Long?,
+    defaultTimezone: String,
     onOpenMedication: (Long) -> Unit,
+    onOpenLifeItem: (TimelineItem) -> Unit,
+    onEditFinished: () -> Unit,
+    onAddMedication: () -> Unit,
+    onAddAlarm: () -> Unit,
+    onAddTimer: () -> Unit,
     repository: LifeItemRepository,
     alarmScheduler: AlarmScheduler,
+    platformActions: PlatformActions,
     padding: PaddingValues,
 ) {
-    var title by remember { mutableStateOf("") }
+    val editingReminder = reminders.firstOrNull { initialType == "Reminder" && it.id == initialEditSourceId }
+    val editingRoutine = routines.firstOrNull { initialType == "Routine" && it.id == initialEditSourceId }
+    val editingEvent = events.firstOrNull { initialType == "Event" && it.id == initialEditSourceId }
+    val editingAlarm = alarms.firstOrNull { initialType == "Alarm" && it.id == initialEditSourceId }
+    val editingTimer = timers.firstOrNull { initialType == "Timer" && it.id == initialEditSourceId }
+    val editedScheduleAt =
+        editingReminder?.scheduledAt
+            ?: editingRoutine?.let { routine ->
+                val minutes = routine.preferredTimeMinutes ?: 0
+                platformActions.localDateTimeToEpoch(routine.startDate, minutes / 60, minutes % 60)
+            }
+            ?: editingEvent?.startAt
+            ?: editingAlarm?.scheduledAt
+            ?: currentTimeMillis() + 60 * 60_000L
+    var title by remember(initialType, initialEditSourceId) {
+        mutableStateOf(editingReminder?.title ?: editingRoutine?.title ?: editingEvent?.title ?: editingAlarm?.label ?: editingTimer?.name.orEmpty())
+    }
     var type by remember(initialType) { mutableStateOf(initialType) }
     var showAdd by remember(initialType, showAddInitially) { mutableStateOf(showAddInitially) }
-    var durationMinutes by remember { mutableStateOf("10") }
-    var details by remember { mutableStateOf("") }
-    var timezone by remember { mutableStateOf("America/New_York") }
-    var recurring by remember { mutableStateOf(false) }
-    val initialScheduleAt = remember { currentTimeMillis() + 60 * 60_000L }
-    var scheduledDate by remember { mutableStateOf(dayKey(initialScheduleAt) * DAY_MILLIS) }
-    var scheduleHour by remember { mutableStateOf(((initialScheduleAt % DAY_MILLIS) / 3_600_000L).toString()) }
-    var scheduleMinute by remember { mutableStateOf((((initialScheduleAt % DAY_MILLIS) / 60_000L) % 60).toString().padStart(2, '0')) }
+    var reviewFilter by remember(initialType, showAddInitially) { mutableStateOf(if (!showAddInitially && initialType == "Medication") "Medications" else "All") }
+    var durationMinutes by remember(initialType, initialEditSourceId) {
+        mutableStateOf(((editingEvent?.endAt?.minus(editingEvent.startAt) ?: editingTimer?.durationMillis ?: 10 * 60_000L) / 60_000L).coerceAtLeast(1).toString())
+    }
+    var details by remember(initialType, initialEditSourceId) {
+        mutableStateOf(editingReminder?.description ?: editingRoutine?.description ?: editingEvent?.description ?: "")
+    }
+    var timezone by remember(initialType, initialEditSourceId) { mutableStateOf(editingEvent?.timezone ?: defaultTimezone) }
+    var recurring by remember(initialType, initialEditSourceId) {
+        mutableStateOf(editingReminder?.recurrenceRule != null || editingRoutine != null || editingEvent?.recurrenceRule != null || editingAlarm?.recurrenceRule != null)
+    }
+    var scheduledDate by remember(initialType, initialEditSourceId) { mutableStateOf(platformActions.localDateEpochMillis(editedScheduleAt)) }
+    var scheduleHour by remember(initialType, initialEditSourceId) { mutableStateOf((platformActions.localMinutesOfDay(editedScheduleAt) / 60).toString()) }
+    var scheduleMinute by remember(initialType, initialEditSourceId) { mutableStateOf((platformActions.localMinutesOfDay(editedScheduleAt) % 60).toString().padStart(2, '0')) }
     var showScheduleDatePicker by remember { mutableStateOf(false) }
+    var showScheduleTimePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val types = listOf("Reminder", "Routine", "Medication", "Event", "Alarm", "Timer")
+    val types = listOf("Reminder", "Routine", "Event")
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { showAdd = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (!showAdd) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text("Saved items") }
-                OutlinedButton(onClick = { showAdd = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (showAdd) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text("Add new") }
+                OutlinedButton(onClick = { onEditFinished(); showAdd = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (!showAdd) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text("Saved items") }
+                OutlinedButton(onClick = { onEditFinished(); showAdd = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (showAdd) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text("Add new") }
             }
         }
         if (showAdd) {
-        item { Text("Quick add", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { types.take(3).forEach { value -> OutlinedButton(onClick = { type = value }) { Text(if (type == value) "$value ✓" else value) } } } }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { types.drop(3).forEach { value -> OutlinedButton(onClick = { type = value }) { Text(if (type == value) "$value ✓" else value) } } } }
+        item { Text(if (initialEditSourceId == null) "Quick add" else "Edit $type", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        if (initialEditSourceId == null) {
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    types.forEach { value -> OutlinedButton(onClick = { type = value }, modifier = Modifier.weight(1f)) { Text(if (type == value) "$value ✓" else value) } }
+                }
+            }
+            item {
+                Text("Specialized items", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedButton(onClick = onAddMedication, modifier = Modifier.weight(1f)) { Text("Medication") }
+                    OutlinedButton(onClick = onAddTimer, modifier = Modifier.weight(1f)) { Text("Timer") }
+                    OutlinedButton(onClick = onAddAlarm, modifier = Modifier.weight(1f)) { Text("Alarm") }
+                }
+            }
+        }
         item { OutlinedTextField(title, { title = it }, label = { Text("$type name") }, modifier = Modifier.fillMaxWidth()) }
         item { OutlinedTextField(details, { details = it }, label = { Text(if (type == "Medication") "Dosage / instructions" else "Description / notes") }, modifier = Modifier.fillMaxWidth()) }
         if (type != "Timer") {
             item { OutlinedButton(onClick = { showScheduleDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Date: ${formatDate(scheduledDate)}") } }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(scheduleHour, { scheduleHour = it.filter(Char::isDigit).take(2) }, label = { Text("Hour (0–23)") }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    OutlinedTextField(scheduleMinute, { scheduleMinute = it.filter(Char::isDigit).take(2) }, label = { Text("Minute") }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                }
-            }
+            item { OutlinedButton(onClick = { showScheduleTimePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Time: ${formatClockTime(scheduleHour.toIntOrNull() ?: 9, scheduleMinute.toIntOrNull() ?: 0)}") } }
         }
         if (type in listOf("Timer", "Event")) item { OutlinedTextField(durationMinutes, { durationMinutes = it.filter(Char::isDigit) }, label = { Text("Duration minutes") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
         if (type == "Event") item { OutlinedTextField(timezone, { timezone = it }, label = { Text("IANA time zone") }, modifier = Modifier.fillMaxWidth()) }
@@ -3017,45 +3599,75 @@ private fun LifeItemsScreen(
                 if (title.isNotBlank()) {
                     scope.launch {
                         val now = currentTimeMillis()
-                        val scheduledAt = scheduledDate + (scheduleHour.toIntOrNull() ?: 9).coerceIn(0, 23) * 3_600_000L + (scheduleMinute.toIntOrNull() ?: 0).coerceIn(0, 59) * 60_000L
+                        val selectedHour = (scheduleHour.toIntOrNull() ?: 9).coerceIn(0, 23)
+                        val selectedMinute = (scheduleMinute.toIntOrNull() ?: 0).coerceIn(0, 59)
+                        val scheduledAt = platformActions.localDateTimeToEpoch(scheduledDate, selectedHour, selectedMinute)
                         val rule = if (recurring) "1:DAY:FIXED" else null
                         when (type) {
                             "Reminder" -> {
-                                val id = repository.save(ReminderEntity(title = title, description = details, scheduledAt = scheduledAt, recurrenceRule = rule, createdAt = now, updatedAt = now))
+                                val id =
+                                    repository.save(
+                                        editingReminder?.copy(title = title, description = details, scheduledAt = scheduledAt, recurrenceRule = rule, updatedAt = now)
+                                            ?: ReminderEntity(title = title, description = details, scheduledAt = scheduledAt, recurrenceRule = rule, createdAt = now, updatedAt = now),
+                                    )
+                                alarmScheduler.cancelReminder(1_000_000 + id)
                                 alarmScheduler.scheduleReminder(1_000_000 + id, scheduledAt, title, NotificationCategory.TASK_REMINDER)
                             }
                             "Routine" -> {
-                                val preferredMinutes = ((scheduledAt - dayKey(scheduledAt) * DAY_MILLIS) / 60_000).toInt()
-                                val id = repository.save(RoutineEntity(title = title, description = details, recurrenceRule = "1:DAY:FIXED", preferredTimeMinutes = preferredMinutes, startDate = dayKey(scheduledAt) * DAY_MILLIS, createdAt = now, updatedAt = now))
-                                repository.save(RoutineOccurrenceEntity(routineId = id, scheduledAt = scheduledAt, createdAt = now, updatedAt = now))
+                                val preferredMinutes = selectedHour * 60 + selectedMinute
+                                val id =
+                                    repository.save(
+                                        editingRoutine?.copy(title = title, description = details, preferredTimeMinutes = preferredMinutes, startDate = scheduledDate, updatedAt = now)
+                                            ?: RoutineEntity(title = title, description = details, recurrenceRule = "1:DAY:FIXED", preferredTimeMinutes = preferredMinutes, startDate = scheduledDate, createdAt = now, updatedAt = now),
+                                    )
+                                val existingOccurrence = routineOccurrences.firstOrNull { it.routineId == id && it.status == "PENDING" }
+                                repository.save(
+                                    existingOccurrence?.copy(scheduledAt = scheduledAt, updatedAt = now)
+                                        ?: RoutineOccurrenceEntity(routineId = id, scheduledAt = scheduledAt, createdAt = now, updatedAt = now),
+                                )
                             }
                             "Medication" -> {
-                                val minutes = ((scheduledAt - dayKey(scheduledAt) * DAY_MILLIS) / 60_000).toInt()
-                                val id = repository.save(MedicationEntity(name = title, dosageText = details, instructions = details, scheduleType = if (recurring) "DAILY" else "ONCE", recurrenceRule = rule, timesOfDay = minutes.toString(), startDate = dayKey(scheduledAt) * DAY_MILLIS, createdAt = now, updatedAt = now))
+                                val minutes = selectedHour * 60 + selectedMinute
+                                val id = repository.save(MedicationEntity(name = title, dosageText = details, instructions = details, scheduleType = if (recurring) "DAILY" else "ONCE", recurrenceRule = rule, timesOfDay = minutes.toString(), startDate = scheduledDate, createdAt = now, updatedAt = now))
                                 repository.save(MedicationOccurrenceEntity(medicationId = id, scheduledAt = scheduledAt, createdAt = now, updatedAt = now))
                                 alarmScheduler.scheduleReminder(2_000_000 + id, scheduledAt, title, NotificationCategory.TASK_REMINDER)
                             }
-                            "Event" -> repository.save(LifeEventEntity(title = title, description = details, startAt = scheduledAt, endAt = scheduledAt + (durationMinutes.toLongOrNull() ?: 60L).coerceAtLeast(1) * 60_000L, timezone = timezone.ifBlank { "UTC" }, recurrenceRule = rule, createdAt = now, updatedAt = now))
+                            "Event" ->
+                                repository.save(
+                                    editingEvent?.copy(title = title, description = details, startAt = scheduledAt, endAt = scheduledAt + (durationMinutes.toLongOrNull() ?: 60L).coerceAtLeast(1) * 60_000L, timezone = timezone.ifBlank { "UTC" }, recurrenceRule = rule, updatedAt = now)
+                                        ?: LifeEventEntity(title = title, description = details, startAt = scheduledAt, endAt = scheduledAt + (durationMinutes.toLongOrNull() ?: 60L).coerceAtLeast(1) * 60_000L, timezone = timezone.ifBlank { "UTC" }, recurrenceRule = rule, createdAt = now, updatedAt = now),
+                                )
                             "Alarm" -> {
-                                val id = repository.save(StandaloneAlarmEntity(label = title, scheduledAt = scheduledAt, recurrenceRule = rule, createdAt = now, updatedAt = now))
+                                val id =
+                                    repository.save(
+                                        editingAlarm?.copy(label = title, scheduledAt = scheduledAt, recurrenceRule = rule, enabled = true, updatedAt = now)
+                                            ?: StandaloneAlarmEntity(label = title, scheduledAt = scheduledAt, recurrenceRule = rule, createdAt = now, updatedAt = now),
+                                    )
+                                alarmScheduler.cancel(3_000_000 + id)
                                 alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + id, triggerAt = scheduledAt, label = title))
                             }
                             "Timer" -> {
                                 val duration = (durationMinutes.toLongOrNull() ?: 10L).coerceAtLeast(1) * 60_000L
-                                val presetId =
-                                    repository.save(
-                                        com.geepscontrol.core.database
-                                            .TimerPresetEntity(name = title, durationSeconds = duration / 1000, notes = details, createdAt = now, updatedAt = now),
-                                    )
-                                val id = repository.save(StandaloneTimerEntity(presetId = presetId, name = title, startedAt = now, resumedAt = now, durationMillis = duration, updatedAt = now))
+                                val id =
+                                    if (editingTimer != null) {
+                                        repository.save(editingTimer.copy(name = title, durationMillis = duration, updatedAt = now))
+                                    } else {
+                                        val presetId =
+                                            repository.save(
+                                                com.geepscontrol.core.database
+                                                    .TimerPresetEntity(name = title, durationSeconds = duration / 1000, notes = details, createdAt = now, updatedAt = now),
+                                            )
+                                        repository.save(StandaloneTimerEntity(presetId = presetId, name = title, startedAt = now, resumedAt = now, durationMillis = duration, updatedAt = now))
+                                    }
                                 alarmScheduler.scheduleTimer(ActiveTimer(id = 4_000_000 + id, mode = TimerMode.COUNTDOWN, state = TimerState.RUNNING, startedAt = now, intendedDurationMillis = duration))
                             }
                         }
                         title = ""
                         showAdd = false
+                        onEditFinished()
                     }
                 }
-            }, modifier = Modifier.fillMaxWidth()) { Text("Save $type") }
+            }, modifier = Modifier.fillMaxWidth()) { Text(if (initialEditSourceId == null) "Save $type" else "Update $type") }
         }
         if (presets.isNotEmpty()) item { Text("Timer presets", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(presets, key = { "preset-${it.id}" }) { preset ->
@@ -3070,11 +3682,24 @@ private fun LifeItemsScreen(
         }
         if (!showAdd) {
         item { Text("Saved life items", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-        items(reminders, key = { "reminder-${it.id}" }) { value ->
-            Card(Modifier.fillMaxWidth()) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("All", "Medications", "Routines").forEach { value ->
+                    OutlinedButton(onClick = { reviewFilter = value }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (reviewFilter == value) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text(value) }
+                }
+            }
+        }
+        if (reviewFilter == "All") items(reminders, key = { "reminder-${it.id}" }) { value ->
+            Card(
+                Modifier.fillMaxWidth().clickable {
+                    onOpenLifeItem(
+                        TimelineItem(value.id, TimelineItemType.REMINDER, value.title, value.scheduledAt, actionable = true, status = value.status, sourceId = value.id, subtitle = value.description),
+                    )
+                },
+            ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.title, fontWeight = FontWeight.SemiBold)
-                    Text("Reminder · ${value.status.lowercase()} · ${formatAlarmTime(value.scheduledAt)}")
+                    Text("Reminder · ${value.status.lowercase()} · ${formatLocalAlarmDateTime(value.scheduledAt, platformActions)}")
                     Row {
                         TextButton(onClick = {
                             scope.launch {
@@ -3088,15 +3713,22 @@ private fun LifeItemsScreen(
                 }
             }
         }
-        items(routines, key = { "routine-${it.id}" }) { value ->
+        if (reviewFilter in setOf("All", "Routines")) items(routines, key = { "routine-${it.id}" }) { value ->
             val history = routineOccurrences.filter { it.routineId == value.id && it.status != "PENDING" }
             val completedCount = history.count { it.status == "COMPLETED" }
             val completionRate = if (history.isEmpty()) 0 else completedCount * 100 / history.size
-            Card(Modifier.fillMaxWidth()) {
+            val pendingOccurrence = routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }
+            Card(
+                Modifier.fillMaxWidth().clickable {
+                    onOpenLifeItem(
+                        TimelineItem(pendingOccurrence?.id ?: value.id, TimelineItemType.ROUTINE, value.title, pendingOccurrence?.scheduledAt, actionable = true, status = pendingOccurrence?.status ?: if (value.active) "ACTIVE" else "PAUSED", sourceId = value.id, subtitle = value.description),
+                    )
+                },
+            ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.title, fontWeight = FontWeight.SemiBold)
                     Text("Routine · ${if (value.active) "active" else "paused"} · $completedCount completed · $completionRate% rate")
-                    routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { Text("Next: ${formatAlarmTime(it.scheduledAt)}", style = MaterialTheme.typography.bodySmall) }
+                    routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { Text("Next: ${formatLocalAlarmDateTime(it.scheduledAt, platformActions)}", style = MaterialTheme.typography.bodySmall) }
                     Row {
                         TextButton(onClick = { scope.launch { routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { repository.save(it.copy(status = "COMPLETED", recordedAt = currentTimeMillis(), updatedAt = currentTimeMillis())) } } }) { Text("Done") }
                         TextButton(onClick = { scope.launch { routineOccurrences.firstOrNull { it.routineId == value.id && it.status == "PENDING" }?.let { repository.save(it.copy(status = "SKIPPED", recordedAt = currentTimeMillis(), updatedAt = currentTimeMillis())) } } }) { Text("Skip") }
@@ -3105,12 +3737,12 @@ private fun LifeItemsScreen(
                 }
             }
         }
-        items(medications, key = { "medication-${it.id}" }) { value ->
+        if (reviewFilter in setOf("All", "Medications")) items(medications, key = { "medication-${it.id}" }) { value ->
             Card(Modifier.fillMaxWidth().clickable { onOpenMedication(value.id) }) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.name, fontWeight = FontWeight.SemiBold)
                     Text("Medication · ${if (value.active) "active" else "paused"}${value.quantityRemaining?.let { " · $it remaining" }.orEmpty()}")
-                    medicationOccurrences.firstOrNull { it.medicationId == value.id && it.status in setOf("DUE", "SNOOZED") }?.let { Text("Next: ${formatAlarmTime(it.snoozedUntil ?: it.scheduledAt)}", style = MaterialTheme.typography.bodySmall) }
+                    medicationOccurrences.firstOrNull { it.medicationId == value.id && it.status in setOf("DUE", "SNOOZED") }?.let { Text("Next: ${formatLocalAlarmDateTime(it.snoozedUntil ?: it.scheduledAt, platformActions)}", style = MaterialTheme.typography.bodySmall) }
                     Row {
                         TextButton(onClick = {
                             scope.launch {
@@ -3128,6 +3760,8 @@ private fun LifeItemsScreen(
                             }
                         }) { Text("Taken") }
                         TextButton(onClick = { scope.launch { medicationOccurrences.firstOrNull { it.medicationId == value.id && it.status in setOf("DUE", "SNOOZED") }?.let { repository.save(it.copy(status = "SKIPPED", recordedAt = currentTimeMillis(), updatedAt = currentTimeMillis())) } } }) { Text("Skip") }
+                    }
+                    Row {
                         TextButton(onClick = {
                             scope.launch {
                                 medicationOccurrences.firstOrNull { it.medicationId == value.id && it.status == "DUE" }?.let {
@@ -3143,19 +3777,31 @@ private fun LifeItemsScreen(
                 }
             }
         }
-        items(events, key = { "event-${it.id}" }) { value ->
-            Card(Modifier.fillMaxWidth()) {
+        if (reviewFilter == "All") items(events, key = { "event-${it.id}" }) { value ->
+            Card(
+                Modifier.fillMaxWidth().clickable {
+                    onOpenLifeItem(
+                        TimelineItem(value.id, TimelineItemType.EVENT, value.title, value.startAt, value.endAt, actionable = false, status = value.status, sourceId = value.id, subtitle = value.description, timezone = value.timezone),
+                    )
+                },
+            ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.title, fontWeight = FontWeight.SemiBold)
-                    Text("Event · ${value.status.lowercase()} · ${formatAlarmTime(value.startAt)} · ${value.timezone}")
+                    Text("Event · ${value.status.lowercase()} · ${formatLocalAlarmDateTime(value.startAt, platformActions)} · ${value.timezone}")
                 }
             }
         }
-        items(alarms, key = { "life-alarm-${it.id}" }) { value ->
-            Card(Modifier.fillMaxWidth()) {
+        if (reviewFilter == "All") items(alarms, key = { "life-alarm-${it.id}" }) { value ->
+            Card(
+                Modifier.fillMaxWidth().clickable {
+                    onOpenLifeItem(
+                        TimelineItem(value.id, TimelineItemType.ALARM, value.label, value.scheduledAt, actionable = true, status = if (value.enabled) "SCHEDULED" else "DISABLED", sourceId = value.id),
+                    )
+                },
+            ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.label, fontWeight = FontWeight.SemiBold)
-                    Text("Alarm · ${if (value.enabled) "enabled" else "disabled"} · ${formatAlarmTime(value.scheduledAt)}")
+                    Text("Alarm · ${if (value.enabled) "enabled" else "disabled"} · ${formatLocalAlarmDateTime(value.scheduledAt, platformActions)}")
                     TextButton(onClick = {
                         scope.launch {
                             repository.setAlarmEnabled(value.id, !value.enabled, currentTimeMillis())
@@ -3165,8 +3811,14 @@ private fun LifeItemsScreen(
                 }
             }
         }
-        items(timers, key = { "standalone-timer-${it.id}" }) { value ->
-            Card(Modifier.fillMaxWidth()) {
+        if (reviewFilter == "All") items(timers, key = { "standalone-timer-${it.id}" }) { value ->
+            Card(
+                Modifier.fillMaxWidth().clickable {
+                    onOpenLifeItem(
+                        TimelineItem(value.id, TimelineItemType.TIMER, value.name.ifBlank { "Timer" }, value.startedAt, value.startedAt + value.durationMillis, actionable = value.state == "RUNNING", status = value.state, sourceId = value.id),
+                    )
+                },
+            ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(value.name, fontWeight = FontWeight.SemiBold)
                     Text(
@@ -3190,6 +3842,8 @@ private fun LifeItemsScreen(
                             }
                         }) { Text(if (value.state == "RUNNING") "Pause" else "Resume") }
                         TextButton(onClick = { scope.launch { repository.save(value.copy(durationMillis = value.durationMillis + 60_000, updatedAt = currentTimeMillis())) } }) { Text("+1m") }
+                    }
+                    Row {
                         TextButton(onClick = { scope.launch { repository.save(value.copy(durationMillis = (value.durationMillis - 60_000).coerceAtLeast(60_000), updatedAt = currentTimeMillis())) } }) { Text("-1m") }
                         TextButton(onClick = {
                             scope.launch {
@@ -3218,24 +3872,26 @@ private fun LifeItemsScreen(
             dismissButton = { TextButton(onClick = { showScheduleDatePicker = false }) { Text("Cancel") } },
         ) { DatePicker(picker) }
     }
-    LaunchedEffect(routines, medications, routineOccurrences, medicationOccurrences) {
-        val generatedAt = currentTimeMillis()
-        val dayStart = dayKey(generatedAt) * DAY_MILLIS
-        routines.filter { it.active && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { routine ->
-            if (routineOccurrences.none { it.routineId == routine.id && it.scheduledAt in dayStart until dayStart + DAY_MILLIS }) {
-                repository.save(RoutineOccurrenceEntity(routineId = routine.id, scheduledAt = dayStart + (routine.preferredTimeMinutes ?: 9 * 60) * 60_000L, createdAt = generatedAt, updatedAt = generatedAt))
-            }
-        }
-        medications.filter { it.active && !it.asNeeded && (it.scheduleType != "ONCE" || it.recurrenceRule != null) && it.startDate <= dayStart && (it.endDate == null || it.endDate >= dayStart) }.forEach { medication ->
-            val minutes =
-                medication.timesOfDay
-                    .split(',')
-                    .mapNotNull { it.trim().toIntOrNull() }
-                    .ifEmpty { listOf(9 * 60) }
-            com.geepscontrol.core.domain.LifeScheduleEngine.medicationTimes(dayStart, minutes).forEach { scheduled ->
-                if (medicationOccurrences.none { it.medicationId == medication.id && it.scheduledAt == scheduled }) repository.save(MedicationOccurrenceEntity(medicationId = medication.id, scheduledAt = scheduled, createdAt = generatedAt, updatedAt = generatedAt))
-            }
-        }
+    if (showScheduleTimePicker) {
+        val picker =
+            rememberTimePickerState(
+                initialHour = (scheduleHour.toIntOrNull() ?: 9).coerceIn(0, 23),
+                initialMinute = (scheduleMinute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                is24Hour = false,
+            )
+        AlertDialog(
+            onDismissRequest = { showScheduleTimePicker = false },
+            title = { Text("Choose time") },
+            text = { TimePicker(picker) },
+            confirmButton = {
+                Button(onClick = {
+                    scheduleHour = picker.hour.toString()
+                    scheduleMinute = picker.minute.toString().padStart(2, '0')
+                    showScheduleTimePicker = false
+                }) { Text("Set time") }
+            },
+            dismissButton = { TextButton(onClick = { showScheduleTimePicker = false }) { Text("Cancel") } },
+        )
     }
     LaunchedEffect(reminders, alarms, timers) {
         val schedulingNow = currentTimeMillis()
@@ -3255,9 +3911,12 @@ private fun TripsScreen(
     transportation: List<com.geepscontrol.core.database.TransportationDetailsEntity>,
     lodging: List<com.geepscontrol.core.database.LodgingDetailsEntity>,
     tasks: List<Task>,
+    checklists: List<ChecklistEntity>,
+    checklistItems: List<ChecklistItemEntity>,
     repository: LifeItemRepository,
     alarmScheduler: AlarmScheduler,
     platformActions: PlatformActions,
+    defaultTimezone: String,
     initialTripId: Long?,
     entryRequest: Int,
     onAddTask: (Long) -> Unit,
@@ -3266,6 +3925,7 @@ private fun TripsScreen(
     var title by remember { mutableStateOf("") }
     var selectedTrip by remember(initialTripId) { mutableStateOf(initialTripId) }
     var detailsExpanded by remember(initialTripId) { mutableStateOf(false) }
+    var tripSection by remember(initialTripId) { mutableStateOf("Overview") }
     var mode by remember { mutableStateOf("Entry") }
     var editingEntryId by remember { mutableStateOf<Long?>(null) }
     var entryType by remember { mutableStateOf("GENERAL") }
@@ -3275,13 +3935,23 @@ private fun TripsScreen(
     var provider by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var website by remember { mutableStateOf("") }
-    var timezone by remember { mutableStateOf("America/New_York") }
-    var startDate by remember { mutableStateOf(dayKey(currentTimeMillis()) * DAY_MILLIS) }
-    var endDate by remember { mutableStateOf(dayKey(currentTimeMillis()) * DAY_MILLIS) }
+    var timezone by remember { mutableStateOf(defaultTimezone) }
+    var startDate by remember { mutableStateOf(platformActions.localDateEpochMillis(currentTimeMillis())) }
+    var endDate by remember { mutableStateOf(platformActions.localDateEpochMillis(currentTimeMillis())) }
+    var startHour by remember { mutableStateOf("9") }
+    var startMinute by remember { mutableStateOf("00") }
+    var endHour by remember { mutableStateOf("10") }
+    var endMinute by remember { mutableStateOf("00") }
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
+    var showStartTimePicker by remember { mutableStateOf(false) }
+    var showEndTimePicker by remember { mutableStateOf(false) }
     var sensitive by remember { mutableStateOf(false) }
     var tripSummary by remember { mutableStateOf("") }
+    var showChecklistChooser by remember { mutableStateOf(false) }
+    var showNewTripChecklist by remember { mutableStateOf(false) }
+    var newTripChecklistName by remember { mutableStateOf("") }
+    var selectedTripChecklistId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     val now = currentTimeMillis()
     LaunchedEffect(initialTripId, trips) {
@@ -3290,6 +3960,7 @@ private fun TripsScreen(
             endDate = trip.endDate
             timezone = trip.destinationTimezones.ifBlank { trip.homeTimezone }
             tripSummary = trip.description
+            tripSection = "Overview"
         }
     }
     LaunchedEffect(entryRequest) {
@@ -3304,33 +3975,102 @@ private fun TripsScreen(
         selectedTrip?.let { tripId ->
             trips.firstOrNull { it.id == tripId }?.let { trip ->
                 item {
-                    Text(trip.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(listOf("${formatDate(trip.startDate)} – ${formatDate(trip.endDate)}", trip.description.ifBlank { trip.destinationTimezones }).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    val tripEntries = entries.filter { it.tripId == tripId && it.status !in setOf("COMPLETED", "CANCELLED") }
+                    val nextEntry = tripEntries.filter { it.startAt != null && it.startAt >= now }.minByOrNull { it.startAt!! }
+                    val tripLists = checklists.filter { it.tripId == tripId }
+                    val listIds = tripLists.mapTo(mutableSetOf()) { it.id }
+                    val packingItems = checklistItems.filter { it.checklistId in listIds }
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(trip.coverColor).copy(alpha = 0.22f))) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(trip.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(listOf("${formatDate(trip.startDate)} – ${formatDate(trip.endDate)}", trip.description.ifBlank { trip.destinationTimezones }).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                            nextEntry?.let { Text("Next: ${it.title} · ${formatLocalAlarmDateTime(it.startAt!!, platformActions)}", fontWeight = FontWeight.SemiBold) }
+                            if (packingItems.isNotEmpty()) Text("Packing: ${packingItems.count { it.checked }} of ${packingItems.size} ready")
+                        }
+                    }
                 }
-            }
-            val linkedTasks = tasks.filter { task -> tripTasks.any { it.tripId == tripId && it.taskId == task.id } }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Trip tasks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(onClick = { detailsExpanded = true; mode = "Entry"; editingEntryId = null; entryType = "GENERAL"; title = ""; details = ""; address = "" }) { Text("Add place") }
-                        Button(onClick = { onAddTask(tripId) }) { Text("Add task") }
+                item {
+                    listOf("Overview", "Itinerary", "Packing", "Tasks", "Reservations").chunked(3).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            row.forEach { section ->
+                                OutlinedButton(
+                                    onClick = {
+                                        tripSection = section
+                                        detailsExpanded = section == "Reservations"
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (tripSection == section) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
+                                ) { Text(section) }
+                            }
+                            repeat(3 - row.size) { Box(Modifier.weight(1f)) }
+                        }
                     }
                 }
             }
-            if (linkedTasks.isEmpty()) item { Text("No tasks linked to this trip yet.") }
-            items(linkedTasks, key = { "trip-main-task-${it.id}" }) { task ->
+            val linkedTasks = tasks.filter { task -> tripTasks.any { it.tripId == tripId && it.taskId == task.id } }
+            if (tripSection in setOf("Overview", "Tasks")) item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Trip tasks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Button(onClick = { onAddTask(tripId) }) { Text("Add task") }
+                }
+            }
+            if (tripSection in setOf("Overview", "Tasks") && linkedTasks.isEmpty()) item { Text("No tasks linked to this trip yet.") }
+            if (tripSection in setOf("Overview", "Tasks")) items(linkedTasks, key = { "trip-main-task-${it.id}" }) { task ->
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = priorityColor(task.priority).copy(alpha = 0.16f))) {
                     Column(Modifier.padding(12.dp)) {
-                        Text(task.title, fontWeight = FontWeight.SemiBold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(todayTypeIcon(TimelineItemType.TASK), modifier = Modifier.semantics { contentDescription = "Task" }, fontSize = 18.sp)
+                        }
                         Text("${task.status.displayName()} · ${task.priority.displayName()}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
+            val tripChecklists = checklists.filter { it.tripId == tripId }
+            if (tripSection in setOf("Overview", "Packing")) item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Checklists", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = { showChecklistChooser = true }) { Text("Add checklist") }
+                }
+            }
+            if (tripSection in setOf("Overview", "Packing") && tripChecklists.isEmpty()) item { Text("No packing or reminder checklists yet.") }
+            if (tripSection in setOf("Overview", "Packing")) items(tripChecklists, key = { "trip-checklist-${it.id}" }) { checklist ->
+                val listItems = checklistItems.filter { it.checklistId == checklist.id }
+                Card(Modifier.fillMaxWidth().clickable { selectedTripChecklistId = checklist.id }) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(checklist.name, fontWeight = FontWeight.SemiBold)
+                            Text("☑", modifier = Modifier.semantics { contentDescription = "Checklist" }, fontSize = 17.sp)
+                        }
+                        Text("${listItems.count { it.checked }} of ${listItems.size} ready", style = MaterialTheme.typography.bodySmall)
+                        if (listItems.isNotEmpty()) {
+                            LinearProgressIndicator(
+                                progress = { listItems.count { it.checked }.toFloat() / listItems.size },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+            }
             val tripPlaces = entries.filter { it.tripId == tripId && it.status !in setOf("COMPLETED", "CANCELLED") && (it.endAt == null || it.endAt >= now) }
-            item { Text("Places & itinerary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            if (tripPlaces.isEmpty()) item { Text("No places added yet.") }
-            items(tripPlaces, key = { "trip-main-place-${it.id}" }) { place ->
+            if (tripSection in setOf("Overview", "Itinerary")) item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Places & itinerary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = {
+                        detailsExpanded = true
+                        mode = "Entry"
+                        editingEntryId = null
+                        entryType = "GENERAL"
+                        title = ""
+                        details = ""
+                        address = ""
+                        startDate = platformActions.localDateEpochMillis(now)
+                        endDate = startDate
+                    }) { Text("Add place") }
+                }
+            }
+            if (tripSection in setOf("Overview", "Itinerary") && tripPlaces.isEmpty()) item { Text("No places added yet.") }
+            if (tripSection in setOf("Overview", "Itinerary")) items(tripPlaces, key = { "trip-main-place-${it.id}" }) { place ->
                 Card(
                     Modifier.fillMaxWidth().clickable {
                         editingEntryId = place.id
@@ -3343,17 +4083,25 @@ private fun TripsScreen(
                         confirmation = place.confirmationNumber
                         provider = place.provider
                         timezone = place.timezone
-                        startDate = place.startAt ?: now
-                        endDate = place.endAt ?: startDate
+                        val startAt = place.startAt ?: now
+                        val endAt = place.endAt ?: startAt
+                        startDate = platformActions.localDateEpochMillis(startAt)
+                        endDate = platformActions.localDateEpochMillis(endAt)
+                        startHour = (platformActions.localMinutesOfDay(startAt) / 60).toString()
+                        startMinute = (platformActions.localMinutesOfDay(startAt) % 60).toString().padStart(2, '0')
+                        endHour = (platformActions.localMinutesOfDay(endAt) / 60).toString()
+                        endMinute = (platformActions.localMinutesOfDay(endAt) % 60).toString().padStart(2, '0')
                     },
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        containerColor = itineraryTypeColor(place.type).copy(alpha = 0.22f),
                     ),
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(place.title, fontWeight = FontWeight.SemiBold)
-                        Text(listOf(place.type.lowercase(), place.address, place.startAt?.let(::formatDate)).filter { !it.isNullOrBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(place.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(itineraryTypeIcon(place.type), modifier = Modifier.semantics { contentDescription = place.type.lowercase().replaceFirstChar { it.uppercase() } }, fontSize = 18.sp)
+                        }
+                        Text(listOf(place.type.lowercase(), place.address, place.startAt?.let { formatLocalAlarmDateTime(it, platformActions) }).filter { !it.isNullOrBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                         Row {
                             if (place.address.isNotBlank()) TextButton(onClick = { platformActions.openMap(place.address) }) { Text("Open map") }
                             TextButton(onClick = { scope.launch { repository.save(place.copy(status = "COMPLETED", updatedAt = currentTimeMillis())) } }) { Text("Complete") }
@@ -3361,7 +4109,37 @@ private fun TripsScreen(
                     }
                 }
             }
-            item {
+            val tripReferences = references.filter { it.tripId == tripId }
+            if (tripSection in setOf("Overview", "Reservations")) item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Reservations & references", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = {
+                        detailsExpanded = true
+                        mode = "Reference"
+                        title = ""
+                        details = ""
+                        address = ""
+                        phone = ""
+                        website = ""
+                    }) { Text("Add") }
+                }
+            }
+            if (tripSection in setOf("Overview", "Reservations") && tripReferences.isEmpty()) item { Text("No reservation notes or references yet.") }
+            if (tripSection in setOf("Overview", "Reservations")) items(tripReferences, key = { "trip-main-reference-${it.id}" }) { reference ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(reference.title, fontWeight = FontWeight.SemiBold)
+                        if (reference.content.isNotBlank()) Text(reference.content, style = MaterialTheme.typography.bodySmall)
+                        Row {
+                            if (reference.address.isNotBlank()) TextButton(onClick = { platformActions.openMap(reference.address) }) { Text("Map") }
+                            if (reference.phone.isNotBlank()) TextButton(onClick = { platformActions.call(reference.phone) }) { Text("Call") }
+                            if (reference.website.isNotBlank()) TextButton(onClick = { platformActions.openWebsite(reference.website) }) { Text("Website") }
+                            if (reference.content.isNotBlank()) TextButton(onClick = { platformActions.copy(reference.title, reference.content) }) { Text("Copy") }
+                        }
+                    }
+                }
+            }
+            if (tripSection == "Overview") item {
                 OutlinedButton(onClick = { detailsExpanded = !detailsExpanded }, modifier = Modifier.fillMaxWidth()) {
                     Text(if (detailsExpanded) "▼ Hide trip details & itinerary" else "▶ Show trip details & itinerary")
                 }
@@ -3414,6 +4192,12 @@ private fun TripsScreen(
                         OutlinedButton(onClick = { showEndPicker = true }, modifier = Modifier.weight(1f)) { Text("End: ${formatDate(endDate)}") }
                     }
                 }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { showStartTimePicker = true }, modifier = Modifier.weight(1f)) { Text("At ${formatClockTime(startHour.toIntOrNull() ?: 9, startMinute.toIntOrNull() ?: 0)}") }
+                        OutlinedButton(onClick = { showEndTimePicker = true }, modifier = Modifier.weight(1f)) { Text("To ${formatClockTime(endHour.toIntOrNull() ?: 10, endMinute.toIntOrNull() ?: 0)}") }
+                    }
+                }
                 item { OutlinedTextField(timezone, { timezone = it }, label = { Text("IANA time zone") }, modifier = Modifier.fillMaxWidth()) }
             } else {
                 item { OutlinedTextField(phone, { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth()) }
@@ -3438,8 +4222,9 @@ private fun TripsScreen(
                                     .TripReferenceEntity(tripId = selectedTrip!!, category = "GENERAL", title = title, content = details, address = address, phone = phone, website = website, sensitive = sensitive, createdAt = now, updatedAt = now),
                             )
                         } else {
-                            val start = startDate
-                            val end = endDate.coerceAtLeast(startDate)
+                            val start = platformActions.localDateTimeToEpoch(startDate, startHour.toIntOrNull() ?: 9, startMinute.toIntOrNull() ?: 0)
+                            val endCandidate = platformActions.localDateTimeToEpoch(endDate, endHour.toIntOrNull() ?: 10, endMinute.toIntOrNull() ?: 0)
+                            val end = endCandidate.coerceAtLeast(start)
                             val previous = editingEntryId?.let { id -> entries.firstOrNull { it.id == id } }
                             val id = repository.save(ItineraryEntryEntity(id = editingEntryId ?: 0, tripId = selectedTrip!!, type = entryType, title = title, description = details, startAt = start, endAt = end, timezone = timezone.ifBlank { "UTC" }, address = address, confirmationNumber = confirmation, bookingReference = confirmation, provider = provider, notes = details, createdAt = previous?.createdAt ?: now, updatedAt = now))
                             if (entryType in setOf("FLIGHT", "TRAIN", "BUS", "FERRY", "TRANSFER")) {
@@ -3506,9 +4291,15 @@ private fun TripsScreen(
             if (selectedTrip == trip.id && detailsExpanded) {
                 item { Text("Itinerary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                 items(tripEntries, key = { "trip-entry-${it.id}" }) { entry ->
-                    Card(Modifier.fillMaxWidth().padding(start = 16.dp)) {
+                    Card(
+                        Modifier.fillMaxWidth().padding(start = 16.dp),
+                        colors = CardDefaults.cardColors(containerColor = itineraryTypeColor(entry.type).copy(alpha = 0.22f)),
+                    ) {
                         Column(Modifier.padding(12.dp)) {
-                            Text(entry.title, fontWeight = FontWeight.SemiBold)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(entry.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                Text(itineraryTypeIcon(entry.type), modifier = Modifier.semantics { contentDescription = entry.type.lowercase().replaceFirstChar { it.uppercase() } }, fontSize = 18.sp)
+                            }
                             Text("${entry.type.lowercase()} · ${entry.status.lowercase()} · ${entry.timezone}")
                             if (entry.address.isNotBlank()) Text(entry.address)
                             if (entry.confirmationNumber.isNotBlank()) Text("Confirmation: ${entry.confirmationNumber}")
@@ -3561,6 +4352,168 @@ private fun TripsScreen(
         }
     }
 
+    if (showChecklistChooser) {
+        val reusableChecklists = checklists.filter { it.tripId == null }
+        AlertDialog(
+            onDismissRequest = { showChecklistChooser = false },
+            title = { Text("Add a checklist") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Use a named reusable checklist or start a new one for this trip.")
+                    Button(
+                        onClick = {
+                            showChecklistChooser = false
+                            newTripChecklistName = ""
+                            showNewTripChecklist = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("New checklist") }
+                    if (reusableChecklists.isEmpty()) {
+                        Text("No reusable checklists yet.", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("Reusable checklists", fontWeight = FontWeight.SemiBold)
+                        reusableChecklists.forEach { template ->
+                            val templateItems = checklistItems.filter { it.checklistId == template.id }
+                            OutlinedButton(
+                                onClick = {
+                                    val tripId = selectedTrip
+                                    if (tripId != null) {
+                                        scope.launch {
+                                            val createdAt = currentTimeMillis()
+                                            val checklistId =
+                                                repository.save(
+                                                    ChecklistEntity(
+                                                        name = template.name,
+                                                        tripId = tripId,
+                                                        sourceChecklistId = template.id,
+                                                        createdAt = createdAt,
+                                                        updatedAt = createdAt,
+                                                    ),
+                                                )
+                                            templateItems.forEachIndexed { index, item ->
+                                                repository.save(
+                                                    ChecklistItemEntity(
+                                                        checklistId = checklistId,
+                                                        text = item.text,
+                                                        checked = false,
+                                                        sortOrder = index,
+                                                        createdAt = createdAt,
+                                                        updatedAt = createdAt,
+                                                    ),
+                                                )
+                                            }
+                                            selectedTripChecklistId = checklistId
+                                        }
+                                    }
+                                    showChecklistChooser = false
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(template.name, fontWeight = FontWeight.SemiBold)
+                                    Text("${templateItems.size} item${if (templateItems.size == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showChecklistChooser = false }) { Text("Cancel") } },
+        )
+    }
+    if (showNewTripChecklist) {
+        AlertDialog(
+            onDismissRequest = { showNewTripChecklist = false },
+            title = { Text("New trip checklist") },
+            text = { OutlinedTextField(newTripChecklistName, { newTripChecklistName = it }, label = { Text("Checklist name") }, singleLine = true) },
+            confirmButton = {
+                Button(
+                    enabled = newTripChecklistName.isNotBlank() && selectedTrip != null,
+                    onClick = {
+                        selectedTrip?.let { tripId ->
+                            scope.launch {
+                                val createdAt = currentTimeMillis()
+                                selectedTripChecklistId =
+                                    repository.save(
+                                        ChecklistEntity(
+                                            name = newTripChecklistName.trim(),
+                                            tripId = tripId,
+                                            createdAt = createdAt,
+                                            updatedAt = createdAt,
+                                        ),
+                                    )
+                            }
+                        }
+                        showNewTripChecklist = false
+                    },
+                ) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { showNewTripChecklist = false }) { Text("Cancel") } },
+        )
+    }
+    selectedTripChecklistId?.let { checklistId ->
+        checklists.firstOrNull { it.id == checklistId }?.let { checklist ->
+            ChecklistDialog(
+                checklist = checklist,
+                items = checklistItems.filter { it.checklistId == checklistId },
+                onDismiss = { selectedTripChecklistId = null },
+                onAdd = { text ->
+                    scope.launch {
+                        val createdAt = currentTimeMillis()
+                        repository.save(
+                            ChecklistItemEntity(
+                                checklistId = checklistId,
+                                text = text,
+                                sortOrder = checklistItems.count { it.checklistId == checklistId },
+                                createdAt = createdAt,
+                                updatedAt = createdAt,
+                            ),
+                        )
+                    }
+                },
+                onToggle = { item -> scope.launch { repository.save(item.copy(checked = !item.checked, updatedAt = currentTimeMillis())) } },
+                onRemoveItem = { item -> scope.launch { repository.deleteChecklistItem(item.id) } },
+                onReset = {
+                    scope.launch {
+                        checklistItems.filter { it.checklistId == checklistId && it.checked }.forEach {
+                            repository.save(it.copy(checked = false, updatedAt = currentTimeMillis()))
+                        }
+                    }
+                },
+                onSaveAsReusable = {
+                    scope.launch {
+                        val createdAt = currentTimeMillis()
+                        val templateId =
+                            repository.save(
+                                ChecklistEntity(
+                                    name = checklist.name,
+                                    createdAt = createdAt,
+                                    updatedAt = createdAt,
+                                ),
+                            )
+                        checklistItems.filter { it.checklistId == checklistId }.forEachIndexed { index, item ->
+                            repository.save(
+                                ChecklistItemEntity(
+                                    checklistId = templateId,
+                                    text = item.text,
+                                    checked = false,
+                                    sortOrder = index,
+                                    createdAt = createdAt,
+                                    updatedAt = createdAt,
+                                ),
+                            )
+                        }
+                    }
+                },
+                onDelete = {
+                    scope.launch { repository.deleteChecklist(checklistId) }
+                    selectedTripChecklistId = null
+                },
+            )
+        }
+    }
+
     if (showStartPicker) {
         val picker = rememberDatePickerState(initialSelectedDateMillis = startDate)
         DatePickerDialog(onDismissRequest = { showStartPicker = false }, confirmButton = {
@@ -3580,27 +4533,41 @@ private fun TripsScreen(
             }) { Text("Use date") }
         }, dismissButton = { TextButton(onClick = { showEndPicker = false }) { Text("Cancel") } }) { DatePicker(picker) }
     }
+    if (showStartTimePicker) {
+        val picker = rememberTimePickerState((startHour.toIntOrNull() ?: 9).coerceIn(0, 23), (startMinute.toIntOrNull() ?: 0).coerceIn(0, 59), is24Hour = false)
+        AlertDialog(
+            onDismissRequest = { showStartTimePicker = false },
+            title = { Text("Choose start time") },
+            text = { TimePicker(picker) },
+            confirmButton = {
+                Button(onClick = {
+                    startHour = picker.hour.toString()
+                    startMinute = picker.minute.toString().padStart(2, '0')
+                    showStartTimePicker = false
+                }) { Text("Set time") }
+            },
+            dismissButton = { TextButton(onClick = { showStartTimePicker = false }) { Text("Cancel") } },
+        )
+    }
+    if (showEndTimePicker) {
+        val picker = rememberTimePickerState((endHour.toIntOrNull() ?: 10).coerceIn(0, 23), (endMinute.toIntOrNull() ?: 0).coerceIn(0, 59), is24Hour = false)
+        AlertDialog(
+            onDismissRequest = { showEndTimePicker = false },
+            title = { Text("Choose end time") },
+            text = { TimePicker(picker) },
+            confirmButton = {
+                Button(onClick = {
+                    endHour = picker.hour.toString()
+                    endMinute = picker.minute.toString().padStart(2, '0')
+                    showEndTimePicker = false
+                }) { Text("Set time") }
+            },
+            dismissButton = { TextButton(onClick = { showEndTimePicker = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 private fun formatDurationPrecise(millis: Long): String = formatDuration(millis) + "." + (millis.coerceAtLeast(0) % 1000).toString().padStart(3, '0')
-
-private fun nextAlarmAt(now: Long, hour: Int, minute: Int, weekdays: Set<Int>): Long {
-    val day = dayKey(now)
-    var candidate = day * DAY_MILLIS + hour * 3_600_000L + minute * 60_000L
-    if (candidate <= now) candidate += DAY_MILLIS
-    if (weekdays.isEmpty()) return candidate
-    repeat(14) {
-        val weekday = (((dayKey(candidate) + 4) % 7 + 7) % 7).toInt()
-        if (weekday in weekdays) return candidate
-        candidate += DAY_MILLIS
-    }
-    return candidate
-}
-
-private fun formatAlarmTime(epochMillis: Long): String {
-    val minutes = ((epochMillis % DAY_MILLIS + DAY_MILLIS) % DAY_MILLIS) / 60_000L
-    return formatDate(epochMillis) + " " + (minutes / 60).toString().padStart(2, '0') + ":" + (minutes % 60).toString().padStart(2, '0')
-}
 
 private fun activeAlarmColor(
     triggerAt: Long,
@@ -3626,6 +4593,7 @@ private fun DoNowScreen(
     tasks: List<Task>,
     plan: List<DailyPlanItem>,
     now: Long,
+    platformActions: PlatformActions,
     onEdit: (Task) -> Unit,
     onComplete: (Task) -> Unit,
     onStart: (Task) -> Unit,
@@ -3678,12 +4646,26 @@ private fun DoNowScreen(
                             }
                             Text("Does not match current settings${mismatches.takeIf { it.isNotEmpty() }?.joinToString(prefix = ": ").orEmpty()}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                         }
-                        Text(buildAnnotatedString { append("Score ${recommendation.score}"); recommendation.reasons.forEach { reason -> append(" · "); if (reason.equals("overdue", true)) withStyle(SpanStyle(color = overdueColor, fontWeight = FontWeight.Bold)) { append("overdue!") } else append(reason) } }, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            buildAnnotatedString {
+                                append(recommendation.task.estimatedMinutes?.let { "$it min" } ?: "Flexible duration")
+                                append(" · ${recommendation.task.energyRequirement.displayName()} energy")
+                                recommendation.reasons.forEach { reason ->
+                                    append(" · ")
+                                    if (reason.equals("overdue", true)) withStyle(SpanStyle(color = overdueColor, fontWeight = FontWeight.Bold)) { append("overdue!") } else append(reason)
+                                }
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Button(onClick = { onFeedback(recommendation.task.id, RecommendationAction.STARTED); onStart(recommendation.task) }) { Text("Start") }
+                            if (matches) {
+                                Button(onClick = { onFeedback(recommendation.task.id, RecommendationAction.STARTED); onStart(recommendation.task) }) { Text("Start") }
+                            } else {
+                                OutlinedButton(onClick = { onEdit(recommendation.task) }) { Text("View") }
+                            }
                             OutlinedButton(onClick = { onComplete(recommendation.task) }) { Text("Done") }
-                            TextButton(onClick = { onFeedback(recommendation.task.id, RecommendationAction.DEFERRED); onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, dayKey(now))).copy(deferredUntil = now + 60 * 60 * 1000L)) }) { Text("Later") }
-                            TextButton(onClick = { onFeedback(recommendation.task.id, RecommendationAction.HIDDEN); onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, dayKey(now))).copy(hidden = true)) }) { Text("Hide") }
+                            TextButton(onClick = { onFeedback(recommendation.task.id, RecommendationAction.DEFERRED); onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, platformActions.localEpochDay(now))).copy(deferredUntil = now + 60 * 60 * 1000L)) }) { Text("Later") }
+                            TextButton(onClick = { onFeedback(recommendation.task.id, RecommendationAction.HIDDEN); onSavePlan((plan.firstOrNull { it.taskId == recommendation.task.id } ?: DailyPlanItem(recommendation.task.id, platformActions.localEpochDay(now))).copy(hidden = true)) }) { Text("Hide") }
                         }
                     }
                 }
@@ -3732,6 +4714,37 @@ private fun dueLabel(dueAt: Long): String {
     }
 }
 
+private fun formatClockTime(hour24: Int, minute: Int): String {
+    val normalizedHour = hour24.coerceIn(0, 23)
+    val suffix = if (normalizedHour < 12) "AM" else "PM"
+    val hour12 = (normalizedHour % 12).let { if (it == 0) 12 else it }
+    return "$hour12:${minute.coerceIn(0, 59).toString().padStart(2, '0')} $suffix"
+}
+
+private fun formatAlarmClock(epochMillis: Long, platformActions: PlatformActions): String {
+    val minutes = platformActions.localMinutesOfDay(epochMillis)
+    return formatClockTime(minutes / 60, minutes % 60)
+}
+
+private fun formatLocalAlarmDateTime(epochMillis: Long, platformActions: PlatformActions): String =
+    "${formatDate(platformActions.localDateEpochMillis(epochMillis))} ${formatAlarmClock(epochMillis, platformActions)}"
+
+private fun formatLocalDate(epochMillis: Long, platformActions: PlatformActions): String =
+    formatDate(platformActions.localDateEpochMillis(epochMillis))
+
+private fun alarmSetMessage(remainingMillis: Long): String {
+    if (remainingMillis <= 0) return "Alarm time has already passed"
+    val totalMinutes = (remainingMillis + 59_999L) / 60_000L
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "Alarm set for $hours hr $minutes min from now"
+        hours > 0 -> "Alarm set for $hours hr from now"
+        totalMinutes > 1 -> "Alarm set for $totalMinutes min from now"
+        else -> "Alarm set for less than a minute from now"
+    }
+}
+
 private fun formatDate(epochMillis: Long): String {
     val z = epochMillis / DAY_MILLIS + 719_468
     val era = z / 146_097
@@ -3743,7 +4756,19 @@ private fun formatDate(epochMillis: Long): String {
     val day = dayOfYear - (153 * monthPrime + 2) / 5 + 1
     val month = monthPrime + if (monthPrime < 10) 3 else -9
     year += if (month <= 2) 1 else 0
-    return "$year-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}"
+    val monthName = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[(month - 1).toInt()]
+    val suffix =
+        if (day % 100 in 11..13) {
+            "th"
+        } else {
+            when (day % 10) {
+                1L -> "st"
+                2L -> "nd"
+                3L -> "rd"
+                else -> "th"
+            }
+        }
+    return "$monthName $day$suffix '${(year % 100).toString().padStart(2, '0')}"
 }
 
 private const val DAY_MILLIS = 86_400_000L
