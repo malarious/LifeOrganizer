@@ -73,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -81,6 +82,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.WbSunny
@@ -156,6 +158,34 @@ import kotlinx.coroutines.launch
 // Temporary recording-safe label: keep the real account internal for calendar access.
 private const val CALENDAR_ACCOUNT_RECORDING_PLACEHOLDER = "PlaceHolder@gmail.com"
 private const val CALENDAR_NAME_RECORDING_PLACEHOLDER = "Private calendar"
+
+@Composable
+private fun AddressMapAction(
+    address: String,
+    platformActions: PlatformActions,
+) {
+    if (address.isBlank()) return
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = address,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(
+            onClick = { platformActions.openMap(address) },
+            modifier = Modifier.size(32.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = "Open $address in a map",
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1321,8 +1351,9 @@ private fun TaskListScreen(
                 OutlinedButton(
                     onClick = { scopeFilter = scope },
                     modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = if (scopeFilter == scope) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
-                ) { Text(scope) }
+                ) { Text(scope, maxLines = 1) }
             }
         }
         listOf(null, Priority.CRITICAL, Priority.HIGH, Priority.NORMAL, Priority.LOW, Priority.SOMEDAY).chunked(3).forEach { row ->
@@ -2849,8 +2880,19 @@ private fun TimerScreen(
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(alarm.label.ifBlank { "Alarm" }, fontWeight = FontWeight.SemiBold)
-                            Text("Active", color = Color(0xff43a047), fontWeight = FontWeight.SemiBold)
+                            Text(
+                                alarm.label.ifBlank { "Alarm" },
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "Active",
+                                maxLines = 1,
+                                color = Color(0xff43a047),
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                         Text(formatLocalAlarmDateTime(alarm.scheduledAt, platformActions) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
                     }
@@ -4104,9 +4146,9 @@ private fun TripsScreen(
                             Text(place.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                             Text(itineraryTypeIcon(place.type), modifier = Modifier.semantics { contentDescription = place.type.lowercase().replaceFirstChar { it.uppercase() } }, fontSize = 18.sp)
                         }
-                        Text(listOf(place.type.lowercase(), place.address, place.startAt?.let { formatLocalAlarmDateTime(it, platformActions) }).filter { !it.isNullOrBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        Text(listOf(place.type.lowercase(), place.startAt?.let { formatLocalAlarmDateTime(it, platformActions) }).filter { !it.isNullOrBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        AddressMapAction(place.address, platformActions)
                         Row {
-                            if (place.address.isNotBlank()) TextButton(onClick = { platformActions.openMap(place.address) }) { Text("Open map") }
                             TextButton(onClick = { scope.launch { repository.save(place.copy(status = "COMPLETED", updatedAt = currentTimeMillis())) } }) { Text("Complete") }
                         }
                     }
@@ -4133,8 +4175,8 @@ private fun TripsScreen(
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(reference.title, fontWeight = FontWeight.SemiBold)
                         if (reference.content.isNotBlank()) Text(reference.content, style = MaterialTheme.typography.bodySmall)
+                        AddressMapAction(reference.address, platformActions)
                         Row {
-                            if (reference.address.isNotBlank()) TextButton(onClick = { platformActions.openMap(reference.address) }) { Text("Map") }
                             if (reference.phone.isNotBlank()) TextButton(onClick = { platformActions.call(reference.phone) }) { Text("Call") }
                             if (reference.website.isNotBlank()) TextButton(onClick = { platformActions.openWebsite(reference.website) }) { Text("Website") }
                             if (reference.content.isNotBlank()) TextButton(onClick = { platformActions.copy(reference.title, reference.content) }) { Text("Copy") }
@@ -4304,12 +4346,11 @@ private fun TripsScreen(
                                 Text(itineraryTypeIcon(entry.type), modifier = Modifier.semantics { contentDescription = entry.type.lowercase().replaceFirstChar { it.uppercase() } }, fontSize = 18.sp)
                             }
                             Text("${entry.type.lowercase()} · ${entry.status.lowercase()} · ${entry.timezone}")
-                            if (entry.address.isNotBlank()) Text(entry.address)
+                            AddressMapAction(entry.address, platformActions)
                             if (entry.confirmationNumber.isNotBlank()) Text("Confirmation: ${entry.confirmationNumber}")
                             transportation.firstOrNull { it.itineraryEntryId == entry.id }?.let { Text("${it.carrier} ${it.serviceNumber} · ${it.seat.ifBlank { "seat TBD" }}") }
                             lodging.firstOrNull { it.itineraryEntryId == entry.id }?.let { Text("${it.propertyName} · ${it.confirmationNumber}") }
                             Row {
-                                if (entry.address.isNotBlank()) TextButton(onClick = { platformActions.openMap(entry.address) }) { Text("Map") }
                                 if (entry.confirmationNumber.isNotBlank()) TextButton(onClick = { platformActions.copy("Confirmation", entry.confirmationNumber) }) { Text("Copy") }
                                 TextButton(onClick = {
                                     scope.launch {
@@ -4342,8 +4383,8 @@ private fun TripsScreen(
                         Column(Modifier.padding(12.dp)) {
                             Text("${if (reference.sensitive) "🔒 " else ""}${reference.title}", fontWeight = FontWeight.SemiBold)
                             Text(reference.content)
+                            AddressMapAction(reference.address, platformActions)
                             Row {
-                                if (reference.address.isNotBlank()) TextButton(onClick = { platformActions.openMap(reference.address) }) { Text("Map") }
                                 if (reference.phone.isNotBlank()) TextButton(onClick = { platformActions.call(reference.phone) }) { Text("Call") }
                                 if (reference.website.isNotBlank()) TextButton(onClick = { platformActions.openWebsite(reference.website) }) { Text("Website") }
                                 TextButton(onClick = { platformActions.copy(reference.title, reference.content) }) { Text("Copy") }
