@@ -4,6 +4,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class AlarmRepeatEngineTest {
+    @Test fun `legacy daily alarm rules remain repeating`() {
+        assertEquals(AlarmRepeatRule(1, AlarmRepeatUnit.DAY), AlarmRepeatRule.decode("1:DAY:FIXED"))
+    }
     @Test
     fun `hourly and custom day intervals advance correctly`() {
         assertEquals(6 * 3_600_000L, AlarmRepeatEngine.next(AlarmRepeatRule(6, AlarmRepeatUnit.HOUR), 0))

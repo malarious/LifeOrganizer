@@ -1,5 +1,27 @@
 # Alarm and timer refinement
 
+## November 5, 2026: occurrence controls
+
+- Timers → Alarms shows Skip next and +5 minutes for enabled upcoming alarms, Stop snooze for pending snoozes, and Acknowledge / Disable alarm in Alarm activity. Unacknowledged alarms from earlier days remain actionable.
+- Acknowledgment stops the active occurrence and records completion. For repeating alarms, the ordinary next occurrence remains enabled; Disable switches off the whole alarm.
+- Upcoming alarms within two hours have separate quiet Android notifications and a status icon when notifications are allowed. Expand a notification for Skip (Stop snooze when snoozed) and +5 minutes. Repeated delays accumulate for that occurrence. Skipping a daily alarm leaves tomorrow at its normal time.
+- The two-hour window is currently fixed. Android may delay advisory notices under power restrictions; the ringing alarm continues to use alarm-clock scheduling when exact-alarm access is granted. Android notification/channel settings remain authoritative.
+- Daily is available directly in the editor. Legacy daily rules and pre-upgrade snoozes are supported. Regular timestamps survive process/device restart and JSON export/import via schema 15 / format 6.
+- The broader app review and remaining gaps are documented in [the November 5 review](app-review-2026-11-05.md).
+
+### Automated verification
+
+Debug assembly and Android lint pass. All 63 shared/JVM tests, 6 alarm Android tests, and 7 database integration/migration tests pass on the API 36 emulator. Coverage includes repeat-preserving skip/delay, acknowledgment, stale notification actions, simultaneous alarms, legacy snoozes, snooze limits, live observer refresh, daylight saving, and nondestructive migration. Repository-wide formatting remains affected by pre-existing style/line-ending issues.
+
+### Acceptance checks
+
+1. Snooze a one-time alarm, stop it from the app, and confirm Acknowledged with no later ring.
+2. Snooze a daily alarm, acknowledge it from Alarm activity, and confirm tomorrow remains at the normal time.
+3. Schedule two alarms within two hours; expand the Android shade and delay one twice. Confirm only that alarm changes by ten minutes, then skip it and confirm tomorrow remains unchanged.
+4. Disable a snoozed alarm entirely, then acknowledge its history row. Confirm it stays disabled.
+5. Reboot with a snoozed/delayed daily alarm; verify the pending occurrence and following regular time.
+6. Check permission-denied behavior, lock screen, TalkBack, large text, and manufacturer battery restrictions on physical hardware.
+
 ## Implemented scope
 
 - Five bottom destinations remain unchanged.

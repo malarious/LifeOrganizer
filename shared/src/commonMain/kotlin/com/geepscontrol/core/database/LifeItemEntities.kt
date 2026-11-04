@@ -159,6 +159,8 @@ data class StandaloneAlarmEntity(
     val associatedId: Long? = null,
     val lastTriggeredAt: Long? = null,
     val lastDismissedAt: Long? = null,
+    val nextRegularAt: Long? = null,
+    val lastSkippedAt: Long? = null,
     val createdAt: Long,
     val updatedAt: Long,
 )

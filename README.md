@@ -27,6 +27,7 @@ The goal is a practical personal organizer: one place for immediate responsibili
 - Calendar privacy mode that censors calendar names and account addresses while retaining event titles
 - Standalone countdown timers, reusable presets, recent timers, and a stopwatch
 - Clock alarms with recurrence, snooze limits, volume ramps, vibration modes, bundled music, and dismissal challenges
+- One-tap alarm acknowledgment followed by optional Weather today: current conditions, daily rain/high/low, hourly and seven-day forecasts, approximate-location or city search, °C/°F, and offline cached forecasts
 - Daily and weekly reviews, work-session history, and productivity summaries
 - Offline trip planning with itinerary entries, transportation, lodging, places, linked tasks, and conflict warnings
 - Offline Pixel Studio with smart resizing, image pixelification, palettes, drawing tools, layers, animation frames, rotations, and sprite-sheet export
@@ -77,7 +78,7 @@ GPT-5.6 is part of the development story, not a runtime dependency. Life Minder 
 - **Android integrations:** Calendar Provider, notifications, exact alarms, boot recovery, vibration, NFC, maps, browser, dialer, and clipboard
 - **AI during development:** Codex using GPT-5.6
 
-The app deliberately does not request Android Internet permission. External map and website applications may require their own network connections.
+Organizer features work offline. Optional Weather today uses Android Internet permission and, only when requested, approximate foreground location. It connects to Open-Meteo after the user enables weather or searches for a city. See [PRIVACY.md](PRIVACY.md) for the data shared and how to turn it off.
 
 ---
 
@@ -167,6 +168,7 @@ The `androidApp` module owns Android-specific behavior. The `shared` module cont
 - No telemetry or advertising SDK is included.
 - Calendar access is read-only and limited in the UI to calendars selected by the user.
 - Recording privacy mode hides calendar names and account addresses without hiding test event titles.
+- Optional weather sends rounded coordinates or explicit city-search text to Open-Meteo; organizer records are never included.
 
 See [PRIVACY.md](PRIVACY.md) for additional details.
 

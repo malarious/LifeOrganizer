@@ -144,6 +144,21 @@ class DatabaseIntegrationTest {
         }
 
     @Test
+    fun migratesAlarmsFromVersionFourteenAndPreservesHistory() = runBlocking {
+        migrationHelper.createDatabase(TEST_DATABASE, 14).apply {
+            execSQL("INSERT INTO standalone_alarms (id, label, scheduledAt, enabled, sound, vibration, snoozeMinutes, snoozeCount, lastTriggeredAt, createdAt, updatedAt) VALUES (7, 'Wake up', 1000, 1, 1, 1, 8, 2, 500, 1, 500)")
+            close()
+        }
+        database = buildDatabase(context, TEST_DATABASE)
+        val alarm = database!!.lifeItemDao().getStandaloneAlarm(7)!!
+        assertEquals("Wake up", alarm.label)
+        assertEquals(2, alarm.snoozeCount)
+        assertEquals(500L, alarm.lastTriggeredAt)
+        assertEquals(null, alarm.nextRegularAt)
+        assertEquals(null, alarm.lastSkippedAt)
+    }
+
+    @Test
     fun repositoriesPersistRelationshipsAndBlockedState() =
         runBlocking {
             database = buildDatabase(context, TEST_DATABASE)

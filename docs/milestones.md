@@ -1,5 +1,23 @@
 # Milestones
 
+## Optional weather and one-tap acknowledgment — November 5, 2026
+
+- [x] Prominent immediate Acknowledge on the ringing screen, independent of optional challenges
+- [x] Acknowledgment-to-weather flow from the alarm screen and notification, with queue handling
+- [x] Current-location/city weather, current/hourly/seven-day forecast, units, local times, cache, and recovery controls
+- [x] Foreground-only location/network access, opt-in fetching, provider attribution, and updated privacy documentation
+- [x] Parsing and on-device acknowledgment-flow tests
+- [ ] Physical-device location, lock-screen, and accessibility acceptance checks
+
+## Alarm occurrence controls — November 5, 2026
+
+- [x] Acknowledge/disable snoozed and previously unacknowledged alarms from the app
+- [x] Skip one occurrence or repeatedly delay it by five minutes without changing the normal repeat schedule
+- [x] Independent quiet upcoming-alarm notifications within two hours
+- [x] Nondestructive schema 15, format 6 portability, legacy-rule/snooze compatibility, and regression coverage
+- [x] App-wide source review with prioritized follow-up work in `app-review-2026-11-05.md`
+- [ ] Physical-device lock-screen, reboot, battery-policy, and accessibility acceptance checks
+
 The full acceptance criteria live in [product-requirements.md](product-requirements.md). Only one milestone is implemented at a time.
 
 ## Milestone 0 — Repository and Architecture

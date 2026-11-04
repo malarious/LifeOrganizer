@@ -12,6 +12,13 @@ data class AlarmRepeatRule(
     companion object {
         fun decode(value: String?): AlarmRepeatRule? {
             val parts = value?.split(':') ?: return null
+            RecurrenceRule.decode(value)?.let { legacy ->
+                return AlarmRepeatRule(legacy.interval, when (legacy.unit) {
+                    RecurrenceUnit.DAY -> AlarmRepeatUnit.DAY
+                    RecurrenceUnit.WEEK -> AlarmRepeatUnit.WEEK
+                    RecurrenceUnit.MONTH -> AlarmRepeatUnit.MONTH
+                })
+            }
             if (parts.size != 4 || parts[0] != "ALARM") return null
             return AlarmRepeatRule(
                 interval = parts[1].toIntOrNull()?.coerceAtLeast(1) ?: return null,

@@ -21,10 +21,30 @@ import com.geepscontrol.core.database.TripEntity
 import com.geepscontrol.core.database.TripReferenceEntity
 import com.geepscontrol.core.database.TripTaskEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class LifeItemRepository(
     private val dao: LifeItemDao,
 ) {
+    companion object {
+        // Receivers and screens use separate repository instances, but one alarm transition at a time.
+        private val alarmMutex = Mutex()
+    }
+
+    suspend fun updateAlarm(
+        id: Long,
+        transform: suspend (StandaloneAlarmEntity) -> StandaloneAlarmEntity,
+        afterSave: (StandaloneAlarmEntity) -> Unit = {},
+    ): StandaloneAlarmEntity? = alarmMutex.withLock {
+        val current = dao.getStandaloneAlarm(id) ?: return@withLock null
+        val updated = transform(current)
+        if (updated == current) return@withLock null
+        dao.putStandaloneAlarm(updated)
+        afterSave(updated)
+        updated
+    }
+
     fun checklists() = dao.observeChecklists()
 
     fun checklistItems() = dao.observeChecklistItems()

@@ -26,7 +26,7 @@ Binary trip attachments remain intentionally deferred until a bundled archive ca
 - The release APK installs and launches on the Pixel 7 API 36 emulator without a fatal log entry.
 - Android UI launch was checked at 1.5× system font scale; onboarding and primary controls remained readable and operable.
 - A 5,000-task analytics workload is covered by an automated test.
-- The release manifest was inspected and contains no `android.permission.INTERNET` permission.
+- Earlier offline-only builds were verified without Internet permission. Optional Weather today now explicitly requests Internet and approximate foreground-location access; verify its consent screen and the data flow documented in `weather.md` and `PRIVACY.md`.
 - JSON export and raw database backup were exercised in the installed release. The generated JSON was non-empty and the backup contained the SQLite database, WAL, and shared-memory files.
 
 ## Release signing
