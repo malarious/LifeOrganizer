@@ -8,8 +8,9 @@ import kotlin.test.assertTrue
 class AppDestinationTest {
     @Test
     fun `all required destinations exist`() {
-        assertEquals(10, AppDestination.entries.size)
+        assertEquals(11, AppDestination.entries.size)
         assertEquals("Today", AppDestination.entries.first().title)
+        assertTrue(AppDestination.PIXEL_STUDIO in AppDestination.entries)
     }
 
     @Test

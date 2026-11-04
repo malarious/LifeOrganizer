@@ -33,6 +33,8 @@ class LifeItemRepository(
 
     suspend fun save(value: ChecklistItemEntity) = dao.putChecklistItem(value)
 
+    suspend fun deleteChecklistItem(id: Long) = dao.deleteChecklistItem(id)
+
     suspend fun deleteChecklist(id: Long) = dao.deleteChecklist(id)
 
     fun reminders() = dao.observeReminders()

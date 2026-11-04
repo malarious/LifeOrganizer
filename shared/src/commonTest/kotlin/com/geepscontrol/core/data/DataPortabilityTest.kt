@@ -2,6 +2,8 @@ package com.geepscontrol.core.data
 
 import com.geepscontrol.core.database.ItineraryEntryEntity
 import com.geepscontrol.core.database.AlarmProfileEntity
+import com.geepscontrol.core.database.ChecklistEntity
+import com.geepscontrol.core.database.ChecklistItemEntity
 import com.geepscontrol.core.database.StandaloneAlarmEntity
 import com.geepscontrol.core.database.TripEntity
 import kotlinx.serialization.encodeToString
@@ -42,5 +44,46 @@ class DataPortabilityTest {
         assertEquals("NUMBER", decodeAndValidateExport(json.encodeToString(bundle), json).alarmProfiles.single().dismissalMethod)
         assertEquals("TRACE", decodeAndValidateExport(json.encodeToString(bundle), json).standaloneAlarms.single().dismissalMethod)
         assertFails { decodeAndValidateExport(json.encodeToString(bundle.copy(alarmProfiles = emptyList())), json) }
+    }
+
+    @Test fun `reusable and trip checklists round trip with references`() {
+        val trip = TripEntity(5, "Japan", startDate = 0, endDate = 100, homeTimezone = "America/Detroit", createdAt = 0, updatedAt = 0)
+        val reusable = ChecklistEntity(id = 11, name = "Packing", createdAt = 0, updatedAt = 0)
+        val tripList = ChecklistEntity(id = 12, name = "Japan packing", tripId = trip.id, sourceChecklistId = reusable.id, createdAt = 0, updatedAt = 0)
+        val items =
+            listOf(
+                ChecklistItemEntity(id = 21, checklistId = reusable.id, text = "Passport", createdAt = 0, updatedAt = 0),
+                ChecklistItemEntity(id = 22, checklistId = tripList.id, text = "Rail pass", checked = true, createdAt = 0, updatedAt = 0),
+            )
+        val bundle =
+            ExportBundle(
+                exportedAt = 1,
+                projects = emptyList(),
+                tasks = emptyList(),
+                contexts = emptyList(),
+                tags = emptyList(),
+                sessions = emptyList(),
+                reviews = emptyList(),
+                alarms = emptyList(),
+                trips = listOf(trip),
+                checklists = listOf(reusable, tripList),
+                checklistItems = items,
+            )
+
+        val decoded = decodeAndValidateExport(json.encodeToString(bundle), json)
+        assertEquals(listOf("Packing", "Japan packing"), decoded.checklists.map { it.name })
+        assertEquals(2, decoded.checklistItems.size)
+        assertFails {
+            decodeAndValidateExport(
+                json.encodeToString(bundle.copy(checklistItems = items.map { it.copy(checklistId = 999) })),
+                json,
+            )
+        }
+        assertFails {
+            decodeAndValidateExport(
+                json.encodeToString(bundle.copy(checklists = listOf(tripList.copy(sourceChecklistId = 999)))),
+                json,
+            )
+        }
     }
 }

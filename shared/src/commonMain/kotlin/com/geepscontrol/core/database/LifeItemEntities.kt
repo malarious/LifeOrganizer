@@ -229,10 +229,13 @@ data class AlarmProfileEntity(
     val updatedAt: Long,
 )
 
-@Entity(tableName = "checklists")
+@Entity(tableName = "checklists", indices = [Index("tripId"), Index("sourceChecklistId")])
+@Serializable
 data class ChecklistEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
+    val tripId: Long? = null,
+    val sourceChecklistId: Long? = null,
     val createdAt: Long,
     val updatedAt: Long,
 )
@@ -242,6 +245,7 @@ data class ChecklistEntity(
     foreignKeys = [ForeignKey(entity = ChecklistEntity::class, parentColumns = ["id"], childColumns = ["checklistId"], onDelete = ForeignKey.CASCADE)],
     indices = [Index("checklistId")],
 )
+@Serializable
 data class ChecklistItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val checklistId: Long,
@@ -294,6 +298,9 @@ interface LifeItemDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putChecklistItem(value: ChecklistItemEntity): Long
+
+    @Query("DELETE FROM checklist_items WHERE id = :id")
+    suspend fun deleteChecklistItem(id: Long)
 
     @Query("DELETE FROM checklists WHERE id = :id")
     suspend fun deleteChecklist(id: Long)
