@@ -49,7 +49,7 @@ import kotlinx.serialization.json.Json
 @Serializable
 data class ExportBundle(
     val format: String = "life-minder",
-    val version: Int = 5,
+    val version: Int = 6,
     val exportedAt: Long,
     val projects: List<ProjectDto>,
     val tasks: List<TaskDto>,
@@ -409,7 +409,7 @@ fun decodeAndValidateExport(
     json: Json = Json { ignoreUnknownKeys = true },
 ): ExportBundle {
     val bundle = json.decodeFromString<ExportBundle>(content)
-    require(bundle.format == "life-minder" && bundle.version in 1..5) { "Unsupported Life Minder export" }
+    require(bundle.format == "life-minder" && bundle.version in 1..6) { "Unsupported Life Minder export" }
     require(bundle.projects.all { it.name.isNotBlank() } && bundle.tasks.all { it.title.isNotBlank() }) { "Export contains blank required names" }
     require(
         bundle.projects

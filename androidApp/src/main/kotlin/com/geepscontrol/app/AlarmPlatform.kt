@@ -15,8 +15,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.geepscontrol.core.database.buildDatabase
 import com.geepscontrol.core.domain.AlarmDefinition
-import com.geepscontrol.core.domain.AlarmRepeatEngine
-import com.geepscontrol.core.domain.AlarmRepeatRule
+import com.geepscontrol.core.domain.AlarmOccurrenceAction
+import com.geepscontrol.core.domain.AlarmOccurrenceCoordinator
 import com.geepscontrol.core.domain.AlarmScheduler
 import com.geepscontrol.core.domain.NotificationCategory
 import com.geepscontrol.core.domain.NotificationPolicy
@@ -26,8 +26,6 @@ import com.geepscontrol.core.settings.AndroidAppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -38,7 +36,8 @@ class AndroidAlarmScheduler(
     private val manager = context.getSystemService(AlarmManager::class.java)
 
     override fun schedule(alarm: AlarmDefinition) {
-        val operation = pending(context, AlarmReceiver.ACTION_FIRE, alarm.id)
+        if (!alarm.enabled) { cancel(alarm.id); return }
+        val operation = pending(context, AlarmReceiver.ACTION_FIRE, alarm.id, alarm.triggerAt)
         if (Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()) {
             val showAlarm = PendingIntent.getActivity(
                 context,
@@ -50,10 +49,13 @@ class AndroidAlarmScheduler(
         } else {
             manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.triggerAt, operation)
         }
+        UpcomingAlarmNotifications.schedule(context, alarm)
     }
 
     override fun cancel(alarmId: Long) {
         manager.cancel(pending(context, AlarmReceiver.ACTION_FIRE, alarmId))
+        UpcomingAlarmNotifications.cancel(context, alarmId)
+        context.sendBroadcast(Intent(ACTION_STOP_ALERT).setPackage(context.packageName).putExtra(AlarmReceiver.EXTRA_ID, alarmId))
         NotificationManagerCompat.from(context).cancel(alarmId.toInt())
     }
 
@@ -98,6 +100,7 @@ class AndroidAlarmScheduler(
     }
 
     companion object {
+        const val ACTION_STOP_ALERT = "com.geepscontrol.STOP_ALERT"
         const val TIMER_ID = -9_001L
         const val TIMER_NOTIFICATION_ID = 90_001
     }
@@ -110,67 +113,43 @@ class AlarmReceiver : BroadcastReceiver() {
     ) {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val database = buildDatabase(context)
             try {
                 val id = intent.getLongExtra(EXTRA_ID, 0)
-                val repository = RoomTimerRepository(buildDatabase(context).timerDao())
-                val lifeRepository = LifeItemRepository(buildDatabase(context).lifeItemDao())
+                val repository = RoomTimerRepository(database.timerDao())
+                val lifeRepository = LifeItemRepository(database.lifeItemDao())
+                val coordinator = AlarmOccurrenceCoordinator(lifeRepository, AndroidAlarmScheduler(context), AndroidPlatformActions(context))
+                val expectedAt = intent.takeIf { it.hasExtra(UpcomingAlarmNotifications.EXTRA_SCHEDULED_AT) }?.getLongExtra(UpcomingAlarmNotifications.EXTRA_SCHEDULED_AT, 0)
                 when (intent.action) {
+                    UpcomingAlarmNotifications.ACTION_SHOW -> {
+                        lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)?.let { UpcomingAlarmNotifications.show(context, it, expectedAt ?: it.scheduledAt) }
+                    }
+                    UpcomingAlarmNotifications.ACTION_SKIP, UpcomingAlarmNotifications.ACTION_DELAY -> {
+                        coordinator.perform(id - STANDALONE_ALARM_OFFSET, if (intent.action == UpcomingAlarmNotifications.ACTION_SKIP) AlarmOccurrenceAction.SKIP else AlarmOccurrenceAction.DELAY, System.currentTimeMillis(), expectedAt)
+                    }
                     ACTION_FIRE -> {
-                        val standalone = lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)?.takeIf { it.enabled }
+                        val standalone = if (id in STANDALONE_ALARM_OFFSET until 4_000_000L) {
+                            coordinator.perform(id - STANDALONE_ALARM_OFFSET, AlarmOccurrenceAction.FIRE, System.currentTimeMillis(), expectedAt)
+                                ?: return@launch
+                        } else null
+                        if (standalone?.recurrenceRule == null) UpcomingAlarmNotifications.cancel(context, id)
                         val profile = standalone?.profileId?.let { lifeRepository.getAlarmProfile(it) }
                         val alarm = repository.getAlarm(id)?.takeIf { it.enabled } ?: standalone?.let { AlarmDefinition(id = id, triggerAt = it.scheduledAt, label = it.label, vibration = it.vibration, sound = it.sound) }
                         alarm?.let { showAlarmScreen(context, it.id, it.label, sound = it.sound, vibration = it.vibration, soundId = standalone?.soundId ?: profile?.soundId, profileName = profile?.name, loopSound = standalone?.loopSound ?: profile?.loopSound ?: true, vibrationMode = standalone?.vibrationMode ?: profile?.vibrationMode ?: "STANDARD", vibrationDelaySeconds = standalone?.vibrationStartDelaySeconds ?: profile?.vibrationStartDelaySeconds ?: 0, startingVolumePercent = standalone?.startingVolumePercent ?: profile?.startingVolumePercent ?: 100, maximumVolumePercent = standalone?.maximumVolumePercent ?: profile?.maximumVolumePercent ?: 100, volumeRampSeconds = standalone?.volumeRampSeconds ?: profile?.volumeRampSeconds ?: 0, dismissalMethod = standalone?.dismissalMethod ?: profile?.dismissalMethod ?: "STANDARD", dismissalDifficulty = standalone?.dismissalDifficulty ?: profile?.dismissalDifficulty ?: "NORMAL", snoozeAvailable = com.geepscontrol.core.domain.AlarmExperience.canSnooze(standalone?.snoozeCount ?: 0, standalone?.maximumSnoozes ?: profile?.maximumSnoozes ?: 0)) }
-                        standalone?.let { value ->
-                            val firedAt = System.currentTimeMillis()
-                            if (value.recurrenceRule != null) {
-                                val next = AlarmRepeatRule.decode(value.recurrenceRule)?.let { AlarmRepeatEngine.nextFuture(it, value.scheduledAt, firedAt) } ?: value.scheduledAt + 86_400_000L
-                                lifeRepository.save(value.copy(scheduledAt = next, localEpochDay = java.time.Instant.ofEpochMilli(next).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay(), lastTriggeredAt = firedAt, updatedAt = firedAt))
-                                AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = next, label = value.label, vibration = value.vibration, sound = value.sound))
-                            } else {
-                                lifeRepository.save(value.copy(lastTriggeredAt = firedAt, updatedAt = firedAt))
-                            }
+                    }
+                    ACTION_SNOOZE -> {
+                        if (id in STANDALONE_ALARM_OFFSET until 4_000_000L) {
+                            coordinator.perform(id - STANDALONE_ALARM_OFFSET, AlarmOccurrenceAction.SNOOZE, System.currentTimeMillis())
+                        } else repository.getAlarm(id)?.let { alarm ->
+                            val snoozed = alarm.copy(triggerAt = System.currentTimeMillis() + 10 * 60_000L, enabled = true)
+                            repository.saveAlarm(snoozed)
+                            AndroidAlarmScheduler(context).cancel(id)
+                            AndroidAlarmScheduler(context).schedule(snoozed)
                         }
                     }
-                    ACTION_SNOOZE ->
-                        (
-                            repository.getAlarm(id)?.let { alarm ->
-                                val snoozed = alarm.copy(triggerAt = System.currentTimeMillis() + 10 * 60_000L, enabled = true)
-                                repository.saveAlarm(snoozed)
-                                AndroidAlarmScheduler(context).schedule(snoozed)
-                                NotificationManagerCompat.from(context).cancel(id.toInt())
-                                true
-                            } ?: false
-                        ).also { handled ->
-                            if (!handled) {
-                                lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)?.let { alarm ->
-                                    val now = System.currentTimeMillis()
-                                    val profile = alarm.profileId?.let { lifeRepository.getAlarmProfile(it) }
-                                    if (com.geepscontrol.core.domain.AlarmExperience.canSnooze(alarm.snoozeCount, alarm.maximumSnoozes ?: profile?.maximumSnoozes ?: 0)) {
-                                        val minutes = alarm.snoozeMinutes
-                                        lifeRepository.snoozeAlarm(alarm.id, now + minutes * 60_000L, now)
-                                        AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = now + minutes * 60_000L, label = alarm.label, vibration = profile?.vibrationEnabled ?: alarm.vibration, sound = profile?.soundEnabled ?: alarm.sound))
-                                        NotificationManagerCompat.from(context).cancel(id.toInt())
-                                    }
-                                }
-                            }
-                        }
                     ACTION_DISMISS -> {
-                        if (id >= STANDALONE_ALARM_OFFSET) {
-                            val alarm = lifeRepository.getAlarm(id - STANDALONE_ALARM_OFFSET)
-                            if (alarm?.recurrenceRule == null) {
-                                val now = System.currentTimeMillis()
-                                alarm?.let { lifeRepository.save(it.copy(enabled = false, lastDismissedAt = now, updatedAt = now)) }
-                                AndroidAlarmScheduler(context).cancel(id)
-                            } else {
-                                val now = System.currentTimeMillis()
-                                val rule = AlarmRepeatRule.decode(alarm.recurrenceRule)
-                                // ACTION_FIRE normally advances the record first. Keeping an already-future
-                                // date makes dismiss safe even when the two broadcasts finish out of order.
-                                val next = rule?.let { AlarmRepeatEngine.nextFuture(it, alarm.scheduledAt, now) } ?: alarm.scheduledAt
-                                lifeRepository.save(alarm.copy(scheduledAt = next, localEpochDay = java.time.Instant.ofEpochMilli(next).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay(), snoozeCount = 0, lastDismissedAt = now, updatedAt = now))
-                                AndroidAlarmScheduler(context).cancel(id)
-                                AndroidAlarmScheduler(context).schedule(AlarmDefinition(id = id, triggerAt = next, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
-                            }
+                        if (id in STANDALONE_ALARM_OFFSET until 4_000_000L) {
+                            coordinator.perform(id - STANDALONE_ALARM_OFFSET, AlarmOccurrenceAction.ACKNOWLEDGE, System.currentTimeMillis())
                         } else {
                             repository.disableAlarm(id)
                             AndroidAlarmScheduler(context).cancel(id)
@@ -211,14 +190,19 @@ class AlarmReceiver : BroadcastReceiver() {
                         }
                         if (id < 0) scheduleRoutineReminders(context, AndroidAlarmScheduler(context))
                     }
-                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED ->
+                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED, AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED ->
                         AndroidAlarmScheduler(context).let { scheduler ->
                             repository.observeAlarms().first().forEach(scheduler::schedule)
                             repository.observeActive().first()?.let(scheduler::scheduleTimer)
                             lifeRepository.alarms().first().filter { it.enabled }.forEach { alarm ->
-                                val adjusted = if (intent.action in setOf(Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED)) localWallClockTrigger(alarm) else alarm.scheduledAt
+                                val snoozed = com.geepscontrol.core.domain.AlarmOccurrenceEngine.isSnoozed(alarm)
+                                if (alarm.recurrenceRule == null && alarm.lastTriggeredAt != null && !snoozed) return@forEach
+                                val hasOverride = snoozed || alarm.nextRegularAt != null
+                                val clockChanged = intent.action in setOf(Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED)
+                                val adjusted = if (clockChanged && !hasOverride) localWallClockTrigger(alarm) else alarm.scheduledAt
                                 val trigger = adjusted.coerceAtLeast(System.currentTimeMillis() + 500L)
-                                if (adjusted != alarm.scheduledAt) lifeRepository.save(alarm.copy(scheduledAt = trigger, updatedAt = System.currentTimeMillis()))
+                                val regular = alarm.nextRegularAt?.let { if (clockChanged) localWallClockTrigger(alarm.copy(scheduledAt = it)) else it }
+                                if (trigger != alarm.scheduledAt || regular != alarm.nextRegularAt) lifeRepository.save(alarm.copy(scheduledAt = trigger, nextRegularAt = regular, updatedAt = System.currentTimeMillis()))
                                 scheduler.schedule(AlarmDefinition(id = STANDALONE_ALARM_OFFSET + alarm.id, triggerAt = trigger, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
                             }
                             lifeRepository
@@ -240,6 +224,7 @@ class AlarmReceiver : BroadcastReceiver() {
                         }
                 }
             } finally {
+                database.close()
                 pendingResult.finish()
             }
         }
@@ -291,6 +276,11 @@ class AlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val dismissAction = if (isTimer) ACTION_TIMER_DISMISS else ACTION_DISMISS
+        val acknowledge = if (isTimer) pending(context, dismissAction, id) else PendingIntent.getActivity(
+            context, (id % Int.MAX_VALUE).toInt(),
+            Intent(alarmIntent).setAction("com.geepscontrol.ACKNOWLEDGE_SCREEN").putExtra(AlarmActivity.EXTRA_ACKNOWLEDGE_ON_OPEN, true),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val notification =
             NotificationCompat.Builder(context, if (isTimer) CHANNEL_TIMERS else CHANNEL_ALARMS)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
@@ -305,7 +295,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 .setFullScreenIntent(screen, true)
                 .apply {
                     if (!isTimer && snoozeAvailable) addAction(0, "Snooze", pending(context, ACTION_SNOOZE, id))
-                    addAction(0, "Acknowledge", pending(context, dismissAction, id))
+                    addAction(0, "Acknowledge", acknowledge)
                 }
                 .build()
         if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
@@ -386,7 +376,8 @@ private fun pending(
     context: Context,
     action: String,
     id: Long,
-) = PendingIntent.getBroadcast(context, (id % Int.MAX_VALUE).toInt(), Intent(context, AlarmReceiver::class.java).setAction(action).putExtra(AlarmReceiver.EXTRA_ID, id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    scheduledAt: Long? = null,
+) = PendingIntent.getBroadcast(context, (id % Int.MAX_VALUE).toInt(), Intent(context, AlarmReceiver::class.java).setAction(action).putExtra(AlarmReceiver.EXTRA_ID, id).apply { scheduledAt?.let { putExtra(UpcomingAlarmNotifications.EXTRA_SCHEDULED_AT, it) } }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
 private fun reminderPending(
     context: Context,

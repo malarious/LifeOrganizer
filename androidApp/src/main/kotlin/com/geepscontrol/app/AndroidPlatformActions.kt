@@ -19,6 +19,28 @@ import androidx.core.content.ContextCompat
 class AndroidPlatformActions(
     private val context: Context,
 ) : PlatformActions {
+    override fun openWeather(): Boolean = open(Intent(context, WeatherActivity::class.java))
+
+    override fun nextAlarmOccurrence(rule: com.geepscontrol.core.domain.AlarmRepeatRule, previous: Long): Long {
+        val date = java.time.Instant.ofEpochMilli(previous).atZone(java.time.ZoneId.systemDefault())
+        val interval = rule.interval.coerceAtLeast(1).toLong()
+        val next = when (rule.unit) {
+            com.geepscontrol.core.domain.AlarmRepeatUnit.HOUR -> date.plusHours(interval)
+            com.geepscontrol.core.domain.AlarmRepeatUnit.DAY -> date.plusDays(interval)
+            com.geepscontrol.core.domain.AlarmRepeatUnit.MONTH -> date.plusMonths(interval)
+            com.geepscontrol.core.domain.AlarmRepeatUnit.WEEK -> {
+                if (rule.weekdays.isEmpty()) date.plusWeeks(interval) else {
+                    val weekStart = date.toLocalDate().minusDays((date.dayOfWeek.value - 1).toLong())
+                    (1..(interval * 7 + 7)).asSequence().map { date.plusDays(it) }.first { candidate ->
+                        val weeks = java.time.temporal.ChronoUnit.WEEKS.between(weekStart, candidate.toLocalDate().minusDays((candidate.dayOfWeek.value - 1).toLong()))
+                        candidate.dayOfWeek.value % 7 in rule.weekdays && weeks % interval == 0L
+                    }
+                }
+            }
+        }
+        return next.toInstant().toEpochMilli()
+    }
+
     private var previewPlayer: MediaPlayer? = null
     override fun currentTimezoneId(): String = java.util.TimeZone.getDefault().id
 

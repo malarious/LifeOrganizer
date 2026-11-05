@@ -2,6 +2,10 @@ package com.geepscontrol.app
 
 import android.app.Activity
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import android.graphics.Color
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -24,6 +28,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.TextClock
 import android.widget.EditText
+import android.widget.ScrollView
 import kotlin.random.Random
 import com.geepscontrol.core.domain.AlarmDifficulty
 import com.geepscontrol.core.domain.AlarmExperience
@@ -41,19 +46,49 @@ class AlarmActivity : Activity() {
     private var displayingAlarm = false
     private var challengeCompletion: (() -> Unit)? = null
     private var challengeTimeout: Runnable? = null
-    private var openTodayAfterQueue = false
+    private var acknowledgedAlarmInQueue = false
+    private val stopReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val id = intent.getLongExtra(AlarmReceiver.EXTRA_ID, 0)
+            waitingAlarms.removeAll { it.getLongExtra(AlarmReceiver.EXTRA_ID, 0) == id }
+            if (displayingAlarm && alarmId == id) {
+                stopAlert()
+                finishCurrentAlarm()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(this, stopReceiver, IntentFilter(AndroidAlarmScheduler.ACTION_STOP_ALERT), ContextCompat.RECEIVER_NOT_EXPORTED)
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON,
         )
-        showAlarm(intent)
+        if (Build.VERSION.SDK_INT == 26) {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        }
+        acknowledgedAlarmInQueue = savedInstanceState?.getBoolean("acknowledged_alarm") ?: false
+        if (intent.getBooleanExtra(EXTRA_ACKNOWLEDGE_ON_OPEN, false)) {
+            alarmId = intent.getLongExtra(AlarmReceiver.EXTRA_ID, 0)
+            perform(AlarmReceiver.ACTION_DISMISS)
+        } else showAlarm(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_ACKNOWLEDGE_ON_OPEN, false)) {
+            val target = intent.getLongExtra(AlarmReceiver.EXTRA_ID, 0)
+            if (target == alarmId) perform(AlarmReceiver.ACTION_DISMISS) else {
+                waitingAlarms.removeAll { it.getLongExtra(AlarmReceiver.EXTRA_ID, 0) == target }
+                sendBroadcast(Intent(this, AlarmReceiver::class.java).setAction(AlarmReceiver.ACTION_DISMISS).putExtra(AlarmReceiver.EXTRA_ID, target))
+                acknowledgedAlarmInQueue = true
+                if (!displayingAlarm) finishCurrentAlarm()
+            }
+            return
+        }
+        if (displayingAlarm && intent.getLongExtra(AlarmReceiver.EXTRA_ID, 0) == alarmId) return
         if (displayingAlarm) waitingAlarms.addLast(Intent(intent)) else { setIntent(intent); showAlarm(intent) }
     }
 
@@ -111,9 +146,15 @@ class AlarmActivity : Activity() {
         val method = intent.getStringExtra(AlarmReceiver.EXTRA_DISMISSAL_METHOD).orEmpty()
         val difficulty = runCatching { AlarmDifficulty.valueOf(intent.getStringExtra(AlarmReceiver.EXTRA_DISMISSAL_DIFFICULTY).orEmpty()) }.getOrDefault(AlarmDifficulty.NORMAL)
         val challenged = method !in setOf("", "STANDARD")
+        root.addView(actionButton("Acknowledge") { perform(dismissalAction) }.apply {
+            minHeight = (64 * resources.displayMetrics.density).toInt()
+            setBackgroundColor(Color.rgb(49, 92, 73))
+            setTextColor(Color.WHITE)
+        })
+        if (!isTimer) root.addView(TextView(this).apply { text = "Stop this alarm. Repeating alarms keep their normal schedule."; textSize = 15f; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER })
         if (!isTimer && intent.getBooleanExtra(AlarmReceiver.EXTRA_SNOOZE_AVAILABLE, true)) root.addView(actionButton("Snooze") { if (challenged) beginChallenge(root, method, difficulty, AlarmReceiver.ACTION_SNOOZE) else perform(AlarmReceiver.ACTION_SNOOZE) })
-        root.addView(actionButton("Acknowledge") { if (challenged) beginChallenge(root, method, difficulty, dismissalAction) else perform(dismissalAction) })
-        setContentView(root)
+        if (challenged) root.addView(actionButton("Use dismissal challenge") { beginChallenge(root, method, difficulty, dismissalAction) })
+        setContentView(ScrollView(this).apply { isFillViewport = true; addView(root) })
     }
 
     private fun beginChallenge(root: LinearLayout, method: String, difficulty: AlarmDifficulty, action: String) {
@@ -172,19 +213,22 @@ class AlarmActivity : Activity() {
                 .setAction(action)
                 .putExtra(AlarmReceiver.EXTRA_ID, alarmId),
         )
-        if (action == AlarmReceiver.ACTION_DISMISS) {
-            val day = java.time.LocalDate.now().toString()
-            val preferences = getSharedPreferences("geeps-control-settings", MODE_PRIVATE)
-            if (preferences.getString("last_alarm_today_handoff", null) != day) {
-                preferences.edit().putString("last_alarm_today_handoff", day).apply()
-                openTodayAfterQueue = true
-            }
-        }
+        if (action == AlarmReceiver.ACTION_DISMISS) acknowledgedAlarmInQueue = true
+        finishCurrentAlarm()
+    }
+
+    private fun finishCurrentAlarm() {
+        challengeTimeout?.let(handler::removeCallbacks)
+        challengeTimeout = null
+        challengeCompletion = null
         val next = waitingAlarms.removeFirstOrNull()
         if (next == null) {
             displayingAlarm = false
-            if (openTodayAfterQueue) startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_TODAY, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))
-            finishAndRemoveTask()
+            if (acknowledgedAlarmInQueue) {
+                if (AndroidWeatherRepository(this).afterAlarm) startActivity(Intent(this, WeatherActivity::class.java).putExtra(WeatherActivity.EXTRA_FROM_ALARM, true))
+                else startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_TODAY, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+            finish()
         } else {
             setIntent(next)
             showAlarm(next)
@@ -329,9 +373,17 @@ class AlarmActivity : Activity() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(stopReceiver)
         runCatching { NfcAdapter.getDefaultAdapter(this)?.disableReaderMode(this) }
         challengeTimeout?.let(handler::removeCallbacks)
         stopAlert()
         super.onDestroy()
     }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("acknowledged_alarm", acknowledgedAlarmInQueue)
+        super.onSaveInstanceState(outState)
+    }
+
+    companion object { const val EXTRA_ACKNOWLEDGE_ON_OPEN = "acknowledge_on_open" }
 }

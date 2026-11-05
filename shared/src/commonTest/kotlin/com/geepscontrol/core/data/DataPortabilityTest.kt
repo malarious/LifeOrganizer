@@ -20,6 +20,13 @@ class DataPortabilityTest {
         assertEquals(bundle, decodeAndValidateExport(json.encodeToString(bundle), json))
     }
 
+    @Test fun `alarm occurrence overrides round trip and previous exports still load`() {
+        val alarm = StandaloneAlarmEntity(id = 1, label = "Wake", scheduledAt = 105, nextRegularAt = 100, lastSkippedAt = 50, createdAt = 0, updatedAt = 0)
+        val bundle = ExportBundle(exportedAt = 1, projects = emptyList(), tasks = emptyList(), contexts = emptyList(), tags = emptyList(), sessions = emptyList(), reviews = emptyList(), alarms = emptyList(), standaloneAlarms = listOf(alarm))
+        assertEquals(alarm, decodeAndValidateExport(json.encodeToString(bundle), json).standaloneAlarms.single())
+        for (version in 1..5) assertEquals(version, decodeAndValidateExport(json.encodeToString(bundle.copy(version = version)), json).version)
+    }
+
     @Test fun `invalid reference is rejected before import`() {
         val bundle = ExportBundle(exportedAt = 1, projects = emptyList(), tasks = listOf(TaskDto(2, 99, "Broken", "", "READY", "NORMAL", null, "MEDIUM", null, null, null, null, 0, 0, null, 0, emptyList(), emptyList(), emptyList())), contexts = emptyList(), tags = emptyList(), sessions = emptyList(), reviews = emptyList(), alarms = emptyList())
         assertFails { decodeAndValidateExport(json.encodeToString(bundle), json) }

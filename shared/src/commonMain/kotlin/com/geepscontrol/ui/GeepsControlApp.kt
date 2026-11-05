@@ -103,8 +103,10 @@ import com.geepscontrol.core.database.StandaloneTimerEntity
 import com.geepscontrol.core.database.TripEntity
 import com.geepscontrol.core.domain.ActiveTimer
 import com.geepscontrol.core.domain.AlarmDefinition
+import com.geepscontrol.core.domain.AlarmOccurrenceAction
+import com.geepscontrol.core.domain.AlarmOccurrenceCoordinator
+import com.geepscontrol.core.domain.AlarmOccurrenceEngine
 import com.geepscontrol.core.domain.AlarmRepeatRule
-import com.geepscontrol.core.domain.AlarmRepeatEngine
 import com.geepscontrol.core.domain.AlarmRepeatUnit
 import com.geepscontrol.core.domain.bundledAlarmSounds
 import com.geepscontrol.core.domain.AlarmScheduler
@@ -207,8 +209,10 @@ fun LifeMinderApp(
     calendarPermissionRevision: Int,
     onRequestCalendarPermission: () -> Unit,
     onOpenCalendarPermissionSettings: () -> Unit,
+    openAlarms: Boolean = false,
 ) {
-    var destination by remember { mutableStateOf(AppDestination.TODAY) }
+    var destination by remember { mutableStateOf(if (openAlarms) AppDestination.TIMERS else AppDestination.TODAY) }
+    val alarmCoordinator = remember(lifeItemRepository, alarmScheduler, platformActions) { AlarmOccurrenceCoordinator(lifeItemRepository, alarmScheduler, platformActions) }
     var taskBeingEdited by remember { mutableStateOf<Task?>(null) }
     var taskBeingViewed by remember { mutableStateOf<Task?>(null) }
     var medicationBeingViewedId by remember { mutableStateOf<Long?>(null) }
@@ -374,7 +378,7 @@ fun LifeMinderApp(
                 .forEach { scheduled -> if (medicationOccurrences.none { it.medicationId == medication.id && it.scheduledAt == scheduled }) lifeItemRepository.save(MedicationOccurrenceEntity(medicationId = medication.id, scheduledAt = scheduled, createdAt = generatedAt, updatedAt = generatedAt)) }
         }
     }
-    LaunchedEffect(reminders, lifeAlarms, standaloneTimers) {
+    LaunchedEffect(reminders, lifeAlarms, standaloneTimers, calendarPermissionRevision) {
         val schedulingNow = currentTimeMillis()
         reminders.filter { it.status in setOf("SCHEDULED", "SNOOZED") && it.scheduledAt > schedulingNow }.forEach { alarmScheduler.scheduleReminder(1_000_000 + it.id, it.scheduledAt, it.title, NotificationCategory.TASK_REMINDER) }
         lifeAlarms.filter { it.enabled && it.scheduledAt > schedulingNow }.forEach { alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + it.id, triggerAt = it.scheduledAt, label = it.label, vibration = it.vibration, sound = it.sound)) }
@@ -441,16 +445,7 @@ fun LifeMinderApp(
                     }
                     TimelineItemType.ALARM -> {
                         lifeAlarms.firstOrNull { it.id == item.sourceId }?.let { alarm ->
-                            val rule = AlarmRepeatRule.decode(alarm.recurrenceRule)
-                            if (rule == null) {
-                                lifeItemRepository.setAlarmEnabled(alarm.id, false, completedAt)
-                                alarmScheduler.cancel(3_000_000 + alarm.id)
-                            } else {
-                                val nextAt = AlarmRepeatEngine.nextFuture(rule, alarm.scheduledAt, completedAt)
-                                val updated = alarm.copy(scheduledAt = nextAt, updatedAt = completedAt)
-                                lifeItemRepository.save(updated)
-                                alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + alarm.id, triggerAt = nextAt, label = alarm.label))
-                            }
+                            alarmCoordinator.perform(alarm.id, AlarmOccurrenceAction.ACKNOWLEDGE, completedAt)
                         }
                     }
                     TimelineItemType.TASK, TimelineItemType.EVENT, TimelineItemType.TIMER, TimelineItemType.ITINERARY -> Unit
@@ -477,6 +472,7 @@ fun LifeMinderApp(
                         Box {
                             TextButton(onClick = { showTopMenu = true }) { Text("Menu") }
                             DropdownMenu(expanded = showTopMenu, onDismissRequest = { showTopMenu = false }) {
+                                DropdownMenuItem(text = { Text("Weather today") }, onClick = { showTopMenu = false; platformActions.openWeather() })
                                 listOf(
                                     AppDestination.UPCOMING,
                                     AppDestination.LIFE_ITEMS,
@@ -1005,10 +1001,21 @@ fun LifeMinderApp(
                         },
                         onToggleStandaloneAlarm = { alarm ->
                             scope.launch {
-                                val enabled = !alarm.enabled
-                                lifeItemRepository.setAlarmEnabled(alarm.id, enabled, currentTimeMillis())
-                                if (enabled) alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + alarm.id, triggerAt = alarm.scheduledAt, label = alarm.label, vibration = alarm.vibration, sound = alarm.sound))
-                                else alarmScheduler.cancel(3_000_000 + alarm.id)
+                                val now = currentTimeMillis()
+                                if (!alarm.enabled && alarm.recurrenceRule == null && alarm.scheduledAt <= now) {
+                                    snackbar.showSnackbar("Edit this alarm to choose a new time")
+                                } else alarmCoordinator.perform(alarm.id, if (alarm.enabled) AlarmOccurrenceAction.DISABLE else AlarmOccurrenceAction.ENABLE, now)
+                            }
+                        },
+                        onAlarmOccurrenceAction = { alarm, action ->
+                            scope.launch {
+                                val updated = alarmCoordinator.perform(alarm.id, action, currentTimeMillis(), alarm.scheduledAt)
+                                if (updated != null) snackbar.showSnackbar(when (action) {
+                                    AlarmOccurrenceAction.ACKNOWLEDGE -> "Alarm acknowledged"
+                                    AlarmOccurrenceAction.SKIP -> if (updated.enabled) "Occurrence skipped · repeating schedule kept" else "Alarm skipped"
+                                    AlarmOccurrenceAction.DELAY -> "This occurrence delayed by 5 minutes"
+                                    else -> "Alarm updated"
+                                })
                             }
                         },
                         onDeleteStandaloneAlarm = { alarm ->
@@ -2655,6 +2662,7 @@ private fun TimerScreen(
     onDeleteProfile: (AlarmProfileEntity) -> Unit,
     onToggleStandaloneTimer: (StandaloneTimerEntity) -> Unit,
     onToggleStandaloneAlarm: (StandaloneAlarmEntity) -> Unit,
+    onAlarmOccurrenceAction: (StandaloneAlarmEntity, AlarmOccurrenceAction) -> Unit,
     onDeleteStandaloneAlarm: (StandaloneAlarmEntity) -> Unit,
     onDeleteStandaloneTimer: (StandaloneTimerEntity) -> Unit,
     padding: PaddingValues,
@@ -2748,9 +2756,10 @@ private fun TimerScreen(
         alarmMaximumSnoozes = (alarm?.maximumSnoozes ?: alarmMaximumSnoozes.toIntOrNull() ?: 0).toString()
         alarmDismissalMethod = alarm?.dismissalMethod ?: alarmDismissalMethod
         alarmDismissalDifficulty = alarm?.dismissalDifficulty ?: alarmDismissalDifficulty
-        alarmRepeat = when { rule == null -> "Once"; rule.unit == AlarmRepeatUnit.MONTH && rule.interval == 1 -> "Monthly"; rule.unit == AlarmRepeatUnit.WEEK && rule.interval == 1 -> "Weekly"; rule.unit == AlarmRepeatUnit.WEEK && rule.interval == 2 -> "Bi-weekly"; else -> "Custom" }
+        alarmRepeat = when { rule == null -> "Once"; rule.unit == AlarmRepeatUnit.DAY && rule.interval == 1 -> "Daily"; rule.unit == AlarmRepeatUnit.MONTH && rule.interval == 1 -> "Monthly"; rule.unit == AlarmRepeatUnit.WEEK && rule.interval == 1 -> "Weekly"; rule.unit == AlarmRepeatUnit.WEEK && rule.interval == 2 -> "Bi-weekly"; else -> "Custom" }
         showAlarmEditor = true
     }
+    LaunchedEffect(Unit) { while (true) { tick = currentTimeMillis(); delay(1_000) } }
     LaunchedEffect(timerCreationRequest) { if (timerCreationRequest > 0) showCustomTimer = true }
     LaunchedEffect(alarmCreationRequest) { if (alarmCreationRequest > 0) openAlarmEditor(null) }
     LaunchedEffect(active?.state) {
@@ -2773,7 +2782,7 @@ private fun TimerScreen(
     fun occurredToday(at: Long?): Boolean = at != null && at in alarmDayStart until alarmDayEnd
     val todayAlarmHistory =
         standaloneAlarms
-            .filter { occurredToday(it.lastTriggeredAt) || occurredToday(it.lastDismissedAt) }
+            .filter { occurredToday(it.lastTriggeredAt) || occurredToday(it.lastDismissedAt) || occurredToday(it.lastSkippedAt) || AlarmOccurrenceEngine.needsAcknowledgment(it) }
             .sortedByDescending { it.lastTriggeredAt ?: it.scheduledAt }
     val enabledStandaloneAlarms = standaloneAlarms.filter { it.enabled && it.scheduledAt >= tick }
     val otherStandaloneAlarms =
@@ -2877,27 +2886,35 @@ private fun TimerScreen(
             key = { "enabled-alarm-${it.id}" },
         ) { alarm ->
             Card(Modifier.fillMaxWidth().clickable { openAlarmEditor(alarm) }, colors = CardDefaults.cardColors(containerColor = activeAlarmColor(alarm.scheduledAt, tick))) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(
-                                alarm.label.ifBlank { "Alarm" },
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                "Active",
-                                maxLines = 1,
-                                color = Color(0xff43a047),
-                                fontWeight = FontWeight.SemiBold,
-                            )
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(
+                                    alarm.label.ifBlank { "Alarm" },
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    if (AlarmOccurrenceEngine.isSnoozed(alarm)) "Snoozed" else "Active",
+                                    maxLines = 1,
+                                    color = Color(0xff43a047),
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            Text(formatLocalAlarmDateTime(alarm.scheduledAt, platformActions) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
                         }
-                        Text(formatLocalAlarmDateTime(alarm.scheduledAt, platformActions) + alarm.recurrenceRule?.let { " · repeating" }.orEmpty())
+                        OutlinedButton(onClick = { onToggleStandaloneAlarm(alarm) }) { Text("Disable") }
+                        TextButton(onClick = { alarmPendingDelete = alarm }) { Text("Delete") }
                     }
-                    OutlinedButton(onClick = { onToggleStandaloneAlarm(alarm) }) { Text("Disable") }
-                    TextButton(onClick = { alarmPendingDelete = alarm }) { Text("Delete") }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onAlarmOccurrenceAction(alarm, if (AlarmOccurrenceEngine.isSnoozed(alarm)) AlarmOccurrenceAction.ACKNOWLEDGE else AlarmOccurrenceAction.SKIP) }) {
+                            Text(if (AlarmOccurrenceEngine.isSnoozed(alarm)) "Stop snooze" else "Skip next")
+                        }
+                        TextButton(onClick = { onAlarmOccurrenceAction(alarm, AlarmOccurrenceAction.DELAY) }) { Text("+5 minutes") }
+                    }
                 }
             }
         }
@@ -2913,10 +2930,11 @@ private fun TimerScreen(
             }
         }
         if (timerTab == "Alarms" && todayAlarmHistory.isNotEmpty()) {
-            item { Text("Earlier today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { Text("Alarm activity", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             items(todayAlarmHistory, key = { "alarm-history-${it.id}" }) { alarm ->
-                val triggeredAt = alarm.lastTriggeredAt?.takeIf(::occurredToday)
-                val dismissedAt = alarm.lastDismissedAt?.takeIf(::occurredToday)
+                val triggeredAt = alarm.lastTriggeredAt
+                val dismissedAt = alarm.lastDismissedAt
+                val skipped = (alarm.lastSkippedAt ?: Long.MIN_VALUE) > maxOf(triggeredAt ?: Long.MIN_VALUE, dismissedAt ?: Long.MIN_VALUE)
                 val acknowledged = dismissedAt != null && (triggeredAt == null || dismissedAt >= triggeredAt)
                 Card(Modifier.fillMaxWidth().clickable { openAlarmEditor(alarm) }) {
                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -2924,21 +2942,32 @@ private fun TimerScreen(
                             Text(alarm.label.ifBlank { "Alarm" }, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                             Text(
                                 when {
+                                    skipped -> "Skipped this occurrence"
                                     acknowledged -> "Acknowledged at ${formatAlarmClock(dismissedAt!!, platformActions)}"
+                                    AlarmOccurrenceEngine.isSnoozed(alarm) -> "Snoozed"
                                     triggeredAt != null -> "Not acknowledged"
                                     else -> "Acknowledged"
                                 },
-                                color = if (acknowledged) Color(0xff43a047) else MaterialTheme.colorScheme.error,
+                                color = if (acknowledged || skipped) Color(0xff43a047) else MaterialTheme.colorScheme.error,
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }
                         Text(
                             when {
-                                triggeredAt != null -> "Went off ${formatAlarmClock(triggeredAt, platformActions)}"
+                                AlarmOccurrenceEngine.isSnoozed(alarm) -> "Snoozed until ${formatLocalAlarmDateTime(alarm.scheduledAt, platformActions)}"
+                                triggeredAt != null -> "Went off ${formatLocalAlarmDateTime(triggeredAt, platformActions)}"
                                 else -> "Scheduled for ${formatAlarmClock(alarm.scheduledAt, platformActions)}"
                             },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (AlarmOccurrenceEngine.needsAcknowledgment(alarm)) {
+                            Button(onClick = { onAlarmOccurrenceAction(alarm, AlarmOccurrenceAction.ACKNOWLEDGE) }) {
+                                Text(if (AlarmOccurrenceEngine.isSnoozed(alarm)) "Stop snooze & acknowledge" else "Acknowledge")
+                            }
+                        }
+                        if (alarm.enabled) {
+                            TextButton(onClick = { onToggleStandaloneAlarm(alarm) }) { Text("Disable alarm") }
+                        }
                     }
                 }
             }
@@ -3110,7 +3139,7 @@ private fun TimerScreen(
                     if (!alarmTimeIsFuture) {
                         item { Text("Choose a future date and time.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     }
-                    item { SelectorField("Repeat", listOf("Once", "Weekly", "Bi-weekly", "Monthly", "Custom"), alarmRepeat, { it }, { alarmRepeat = it }, Modifier.fillMaxWidth()) }
+                    item { SelectorField("Repeat", listOf("Once", "Daily", "Weekly", "Bi-weekly", "Monthly", "Custom"), alarmRepeat, { it }, { alarmRepeat = it }, Modifier.fillMaxWidth()) }
                     item { OutlinedButton(onClick = { showAlarmAdvanced = !showAlarmAdvanced }, modifier = Modifier.fillMaxWidth()) { Text(if (showAlarmAdvanced) "Hide advanced alarm options" else "Advanced alarm options") } }
                     if (showAlarmAdvanced) item { Text("Alarm behavior", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
                     if (showAlarmAdvanced) item { Row(verticalAlignment = Alignment.CenterVertically) { Switch(alarmSound, { alarmSound = it }); Text("Sound", modifier = Modifier.padding(start = 8.dp)) } }
@@ -3125,7 +3154,7 @@ private fun TimerScreen(
                     if (showAlarmAdvanced) item { SelectorField("Vibration", listOf("OFF", "LIGHT", "STANDARD", "STRONG", "ESCALATING", "CONTINUOUS"), alarmVibrationMode, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmVibrationMode = it }, Modifier.fillMaxWidth()) }
                     if (showAlarmAdvanced && alarmVibrationMode != "OFF") item { Text("Vibration delay: ${alarmVibrationDelay}s"); Slider(alarmVibrationDelay.toFloat(), { alarmVibrationDelay = it.toInt() }, valueRange = 0f..120f, steps = 11) }
                     if (showAlarmAdvanced) item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedTextField(alarmSnoozeMinutes, { alarmSnoozeMinutes = it.filter(Char::isDigit) }, label = { Text("Snooze min") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(alarmMaximumSnoozes, { alarmMaximumSnoozes = it.filter(Char::isDigit) }, label = { Text("Max (0 unlimited)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) } }
-                    if (showAlarmAdvanced) item { SelectorField("End condition", listOf("STANDARD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC", "HOLD"), alarmDismissalMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalMethod = it }, Modifier.fillMaxWidth()) }
+                    if (showAlarmAdvanced) item { SelectorField("Optional end challenge", listOf("STANDARD", "NUMBER", "MATH", "MEMORY", "TRACE", "SORT", "SCAN", "NFC", "HOLD"), alarmDismissalMethod, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalMethod = it }, Modifier.fillMaxWidth()) }
                     if (showAlarmAdvanced && alarmDismissalMethod != "STANDARD") item { SelectorField("Difficulty", listOf("EASY", "NORMAL", "HARD"), alarmDismissalDifficulty, { it.lowercase().replaceFirstChar(Char::uppercase) }, { alarmDismissalDifficulty = it }, Modifier.fillMaxWidth()) }
                     if (alarmRepeat in setOf("Weekly", "Bi-weekly") || (alarmRepeat == "Custom" && alarmUnit == AlarmRepeatUnit.WEEK)) {
                         item { Text("Days of the week", fontWeight = FontWeight.SemiBold) }
@@ -3155,6 +3184,7 @@ private fun TimerScreen(
                 Button(onClick = {
                     val interval = (alarmInterval.toIntOrNull() ?: 1).coerceAtLeast(1)
                     val rule = when (alarmRepeat) {
+                        "Daily" -> AlarmRepeatRule(1, AlarmRepeatUnit.DAY)
                         "Weekly" -> AlarmRepeatRule(1, AlarmRepeatUnit.WEEK, alarmWeekdays)
                         "Bi-weekly" -> AlarmRepeatRule(2, AlarmRepeatUnit.WEEK, alarmWeekdays)
                         "Monthly" -> AlarmRepeatRule(1, AlarmRepeatUnit.MONTH)
@@ -3174,7 +3204,7 @@ private fun TimerScreen(
                             vibration = alarmVibrationMode != "OFF",
                             snoozeMinutes = (alarmSnoozeMinutes.toIntOrNull() ?: 8).coerceAtLeast(1),
                             profileId = null,
-                            snoozeCount = previous?.snoozeCount ?: 0,
+                            snoozeCount = 0,
                             soundId = alarmSoundId,
                             loopSound = alarmLoopSound,
                             vibrationMode = alarmVibrationMode,
@@ -3192,6 +3222,7 @@ private fun TimerScreen(
                             associatedId = previous?.associatedId,
                             lastTriggeredAt = previous?.lastTriggeredAt,
                             lastDismissedAt = previous?.lastDismissedAt,
+                            lastSkippedAt = previous?.lastSkippedAt,
                             createdAt = previous?.createdAt ?: now,
                             updatedAt = now,
                         ),
@@ -3849,8 +3880,7 @@ private fun LifeItemsScreen(
                     Text("Alarm · ${if (value.enabled) "enabled" else "disabled"} · ${formatLocalAlarmDateTime(value.scheduledAt, platformActions)}")
                     TextButton(onClick = {
                         scope.launch {
-                            repository.setAlarmEnabled(value.id, !value.enabled, currentTimeMillis())
-                            if (value.enabled) alarmScheduler.cancel(3_000_000 + value.id) else alarmScheduler.schedule(AlarmDefinition(id = 3_000_000 + value.id, triggerAt = value.scheduledAt, label = value.label))
+                            AlarmOccurrenceCoordinator(repository, alarmScheduler, platformActions).perform(value.id, if (value.enabled) AlarmOccurrenceAction.DISABLE else AlarmOccurrenceAction.ENABLE, currentTimeMillis())
                         }
                     }) { Text(if (value.enabled) "Turn off" else "Enable") }
                 }

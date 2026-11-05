@@ -41,6 +41,8 @@ Screens will use immutable state exposed through `StateFlow`. Events move from c
 
 ## Alarm and notification lifecycle
 
+Schema 15 adds `nextRegularAt` and `lastSkippedAt` to standalone alarms. `AlarmOccurrenceEngine` owns fire/snooze/acknowledge/skip/delay/enable transitions; `AlarmOccurrenceCoordinator` reloads and serializes changes before reconciling Android scheduling. `nextRegularAt` retains the ordinary timestamp while one occurrence is snoozed or delayed. Android calendar arithmetic keeps local weekday/day/month rules consistent. Upcoming notifications have their own quiet channel and per-occurrence action tokens; an old notification cannot alter a newer scheduled occurrence. Android database instances enable multi-instance invalidation so background actions refresh open screens. JSON format 6 preserves the occurrence fields while accepting earlier formats.
+
 Every system alert will use a stable ID stored with its domain reminder. A single coordinator will own scheduling and cancellation.
 
 Pending system work is canceled when an associated task or reminder is completed, canceled, disabled, or rescheduled. Standalone alarms remain distinct from ordinary reminders. Multiple standalone timers use stable per-timer alarm IDs. Boot/package-update handling restores task alarms, standalone alarms, reminders, productivity timers, and standalone timers.
@@ -48,6 +50,8 @@ Pending system work is canceled when an associated task or reminder is completed
 Exact user-requested alarms use `AlarmManager`; without exact-alarm access Android falls back to an inexact while-idle alarm. Alarm audio uses `USAGE_ALARM`. The manifest declares notification, exact-alarm, boot, and vibration permissions. Manufacturer battery management may still delay delivery.
 
 ## Error handling and privacy
+
+The user-requested optional weather feature is a foreground-only exception to the organizer's offline architecture. It uses HTTPS Open-Meteo forecast/geocoding requests after weather is enabled or a city search is requested, approximate location permission only when selected, cancellable work, and a private no-backup forecast cache. It never receives organizer records. The acknowledgment path stops the alert before opening WeatherActivity, so network/location failures cannot affect alarm dismissal. See `weather.md` and `PRIVACY.md` for provider attribution and the data-sharing controls.
 
 The core depends on an `ErrorLogger` interface. No telemetry, remote logging, advertising, account, or network service is permitted for core functionality. User-readable failures should explain whether data was changed and offer a recovery action.
 

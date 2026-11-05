@@ -4,6 +4,10 @@ data class DeviceCalendar(val id: Long, val name: String, val accountName: Strin
 data class DeviceCalendarEvent(val id: Long, val calendarId: Long, val title: String, val startAt: Long, val endAt: Long, val allDay: Boolean, val location: String = "")
 
 interface PlatformActions {
+    fun openWeather(): Boolean = false
+
+    fun nextAlarmOccurrence(rule: AlarmRepeatRule, previous: Long): Long = AlarmRepeatEngine.next(rule, previous)
+
     fun currentTimezoneId(): String = "UTC"
 
     fun localMinutesOfDay(epochMillis: Long): Int =

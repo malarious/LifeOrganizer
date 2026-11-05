@@ -34,7 +34,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    companion object { const val EXTRA_OPEN_TODAY = "open_today" }
+    companion object {
+        const val EXTRA_OPEN_TODAY = "open_today"
+        const val EXTRA_OPEN_ALARMS = "open_alarms"
+    }
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var calendarPermissionRevision by mutableIntStateOf(0)
     private val calendarPermissionLauncher =
@@ -44,7 +47,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.getBooleanExtra(EXTRA_OPEN_TODAY, false)) recreate()
+        if (intent.getBooleanExtra(EXTRA_OPEN_TODAY, false) || intent.getBooleanExtra(EXTRA_OPEN_ALARMS, false)) {
+            setIntent(intent)
+            recreate()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +81,7 @@ class MainActivity : ComponentActivity() {
                     .setData(Uri.parse("package:$packageName")),
             )
         }
-        if (android.os.Build.VERSION.SDK_INT >= 33) registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerForActivityResult(ActivityResultContracts.RequestPermission()) { calendarPermissionRevision++ }.launch(Manifest.permission.POST_NOTIFICATIONS)
         activityScope.launch {
             ensureDefaultContexts(contextRepository)
             ensureDefaultAlarmProfiles(lifeItemRepository, System.currentTimeMillis())
@@ -104,6 +110,7 @@ class MainActivity : ComponentActivity() {
                             .setData(Uri.parse("package:$packageName")),
                     )
                 },
+                openAlarms = intent.getBooleanExtra(EXTRA_OPEN_ALARMS, false),
             )
         }
     }

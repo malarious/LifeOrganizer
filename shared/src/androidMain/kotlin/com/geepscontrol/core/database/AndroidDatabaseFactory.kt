@@ -20,6 +20,7 @@ fun buildDatabase(
         .databaseBuilder<GeepsDatabase>(
             context = context.applicationContext,
             name = context.applicationContext.getDatabasePath(name).absolutePath,
-        ).setDriver(BundledSQLiteDriver())
+        ).enableMultiInstanceInvalidation()
+        .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()
